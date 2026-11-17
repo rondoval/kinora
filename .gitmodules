@@ -1,0 +1,7 @@
+[submodule "external/emu68-common"]
+	path = external/emu68-common
+	url = https://github.com/rondoval/emu68-common.git
+[submodule "external/ffmpeg"]
+	path = external/ffmpeg
+	url = https://git.ffmpeg.org/ffmpeg.git
+	shallow = true
