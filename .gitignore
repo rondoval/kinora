@@ -1,0 +1,14 @@
+# Build output
+/build/
+/install/
+
+# Per-machine agent settings (local paths)
+/.claude/settings.local.json
+/tests/.venv/
+/tests/__pycache__/
+**/__pycache__/
+/tests/runs/
+/tests/.machine/
+/tests/.pytest_cache/
+
+/TODO.md

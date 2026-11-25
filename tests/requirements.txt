@@ -1,0 +1,3 @@
+# What Kinora's suite needs beside the harness's own (external/emu68-common/testing/requirements.txt)
+numpy
+pillow

@@ -1,0 +1,16 @@
+==id $Id: audiocodec_backend_lib.sfd $
+==base _ACBackendBase
+==basetype struct Library *
+==libname audiocodec_backend.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <libraries/audiocodec_backend.h>
+LONG ACB_GetInfo(struct ACBackendInfo *info) (A0)
+LONG ACB_QueryCodec(ULONG index, struct ACCodecInfo *info) (D0,A0)
+APTR ACB_OpenSession(struct ACSessionParams *params, LONG *error) (A0,A1)
+VOID ACB_CloseSession(APTR session) (A0)
+LONG ACB_SendPacket(APTR session, struct ACPacket *packet) (A0,A1)
+LONG ACB_ReceiveFrame(APTR session, struct ACFrame *frame) (A0,A1)
+LONG ACB_Flush(APTR session) (A0)
+==end

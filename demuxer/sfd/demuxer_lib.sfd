@@ -1,0 +1,21 @@
+==id $Id: demuxer_lib.sfd $
+==base _DemuxerBase
+==basetype struct Library *
+==libname demuxer.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <utility/tagitem.h>
+==include <libraries/demuxer.h>
+struct DMXSource *DMX_OpenTagList(struct TagItem *tags) (A0)
+==varargs
+struct DMXSource *DMX_OpenTags(Tag tag1, ...) (A0)
+VOID DMX_Close(struct DMXSource *source) (A0)
+LONG DMX_GetInfo(struct DMXSource *source, struct DMXInfo *info) (A0,A1)
+LONG DMX_GetStream(struct DMXSource *source, ULONG index, struct DMXStream *stream) (A0,D0,A1)
+LONG DMX_SelectStreams(struct DMXSource *source, ULONG mask) (A0,D0)
+LONG DMX_ReadPacket(struct DMXSource *source, struct DMXPacket *packet) (A0,A1)
+VOID DMX_ReleasePacket(struct DMXSource *source, struct DMXPacket *packet) (A0,A1)
+LONG DMX_Seek(struct DMXSource *source, const VCTime *time, ULONG flags) (A0,A1,D0)
+LONG DMX_GetChapter(struct DMXSource *source, ULONG index, struct DMXChapter *chapter) (A0,D0,A1)
+==end

@@ -1,0 +1,52 @@
+diff --git a/libavcodec/ac3dec.c b/libavcodec/ac3dec.c
+--- a/libavcodec/ac3dec.c
++++ b/libavcodec/ac3dec.c
+@@ -278,6 +278,7 @@
+     }
+ 
+     /* renormalize */
++    if (s->normalize_downmix) {
+     norm0 = norm1 = 0.0;
+     for (i = 0; i < s->fbw_channels; i++) {
+         norm0 += downmix_coeffs[0][i];
+@@ -289,6 +290,7 @@
+         downmix_coeffs[0][i] *= norm0;
+         downmix_coeffs[1][i] *= norm1;
+     }
++    }
+ 
+     if (s->output_mode == AC3_CHMODE_MONO) {
+         for (i = 0; i < s->fbw_channels; i++)
+diff --git a/libavcodec/ac3dec.h b/libavcodec/ac3dec.h
+--- a/libavcodec/ac3dec.h
++++ b/libavcodec/ac3dec.h
+@@ -93,6 +93,7 @@
+     INTFLOAT *dlyptr[AC3_MAX_CHANNELS];
+ 
+     AVChannelLayout downmix_layout;
++    int normalize_downmix;                      ///< scale the downmix coefficients so that the downmix cannot overload
+     SHORTFLOAT *downmix_coeffs[2];              ///< stereo downmix coefficients
+ 
+ // Start of flushable fields.
+diff --git a/libavcodec/ac3dec_fixed.c b/libavcodec/ac3dec_fixed.c
+--- a/libavcodec/ac3dec_fixed.c
++++ b/libavcodec/ac3dec_fixed.c
+@@ -163,6 +163,7 @@
+     { "drc_scale", "percentage of dynamic range compression to apply", OFFSET(drc_scale), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 6.0, PAR },
+     { "heavy_compr", "enable heavy dynamic range compression", OFFSET(heavy_compression), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, PAR },
+     { "downmix", "Request a specific channel layout from the decoder", OFFSET(downmix_layout), AV_OPT_TYPE_CHLAYOUT, {.str = NULL}, .flags = PAR },
++    { "normalize_downmix", "scale a downmix so that it cannot overload", OFFSET(normalize_downmix), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, PAR },
+     { NULL},
+ };
+ 
+diff --git a/libavcodec/ac3dec_float.c b/libavcodec/ac3dec_float.c
+--- a/libavcodec/ac3dec_float.c
++++ b/libavcodec/ac3dec_float.c
+@@ -53,6 +53,7 @@
+ {"loro_surmixlev", "Lo/Ro Surround Mix Level", OFFSET(loro_surround_mix_level),  AV_OPT_TYPE_FLOAT, {.dbl = -1.0 }, -1.0, 2.0, EXPORT },
+ 
+     { "downmix", "Request a specific channel layout from the decoder", OFFSET(downmix_layout), AV_OPT_TYPE_CHLAYOUT, {.str = NULL}, .flags = PAR },
++    { "normalize_downmix", "scale a downmix so that it cannot overload", OFFSET(normalize_downmix), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, PAR },
+ 
+     { NULL},
+ };

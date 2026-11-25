@@ -1,0 +1,7 @@
+# The complexity gate's allow list (tests/gates/test_gates.py, emu68test/gates.py):
+#
+#   <file>:<function> <ceiling> <reason>
+#
+# A function not listed may have a cyclomatic complexity of 10 at most. A listed one may have its
+# ceiling, 15 at most, with a reason. A ceiling stays at what the function needs: the gate fails
+# on one that is higher, so this list only goes down.

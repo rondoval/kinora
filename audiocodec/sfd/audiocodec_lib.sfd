@@ -1,0 +1,18 @@
+==id $Id: audiocodec_lib.sfd $
+==base _AudioCodecBase
+==basetype struct Library *
+==libname audiocodec.library
+==bias 30
+==public
+==include <exec/types.h>
+==include <utility/tagitem.h>
+==include <libraries/audiocodec.h>
+struct ACSession *AC_OpenSessionTagList(struct TagItem *tags) (A0)
+==varargs
+struct ACSession *AC_OpenSessionTags(Tag tag1, ...) (A0)
+VOID AC_CloseSession(struct ACSession *session) (A0)
+LONG AC_SendPacket(struct ACSession *session, struct ACPacket *packet) (A0,A1)
+LONG AC_ReceiveFrame(struct ACSession *session, struct ACFrame *frame) (A0,A1)
+LONG AC_Flush(struct ACSession *session) (A0)
+LONG AC_QueryCodec(ULONG index, struct ACCodecInfo *info) (D0,A0)
+==end

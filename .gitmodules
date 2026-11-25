@@ -5,3 +5,7 @@
 	path = external/ffmpeg
 	url = https://git.ffmpeg.org/ffmpeg.git
 	shallow = true
+[submodule "external/freetype"]
+	path = external/freetype
+	url = https://gitlab.freedesktop.org/freetype/freetype.git
+	shallow = true

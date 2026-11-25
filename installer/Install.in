@@ -1,0 +1,266 @@
+; Kinora installer
+; Requires Commodore Installer v43.3 or later.
+; SPDX-License-Identifier: MPL-2.0
+;
+; NOTE: this is a template.  The build's `package` target generates the real
+; `Install` from it, substituting @PACKAGE_VERSION_DISPLAY@ (the CMake project
+; version, plus the build stamp on a local build).
+;
+; TEXT BUDGET - the Installer word-wraps display text at about 53 characters
+; (topaz 8; it is really a pixel width, so a wider screen font wraps sooner)
+; into a text area roughly ten lines tall, and pages the overflow behind a
+; "More" button.  Therefore:
+;   (message) (prompt) (abort)  must fit ONE page: <= 10 lines of <= 50 columns
+;   (help)                      may run to ~12 of our lines (it pages)
+; Blank separator lines count.  Anything that does not fit belongs in the
+; ReadMe or in the question's (help).
+
+(set #kinora-version "@PACKAGE_VERSION_DISPLAY@")
+
+; The program gets a drawer of its own; the libraries go to LIBS:.
+(set @default-dest "SYS:Utilities")
+
+; The archive's drawer: where this script lies.  Started from its icon the
+; Installer stands there already; started from a shell it need not.
+(set #archive (pathonly @icon))
+
+; Require Installer v43.3+ (askbool defaults, version checking).
+; 2818051 = (43 << 16) | 3.
+(if (< @installer-version 2818051)
+    (
+        (message
+            (cat
+                "This installer needs Commodore Installer v43.3\n"
+                "or later.  Please update the Installer tool and\n"
+                "try again."
+            )
+            (all)
+        )
+        (exit (quiet))
+    )
+)
+
+; ---------------------------------------------------------------------------
+; Helper procedures
+; ---------------------------------------------------------------------------
+
+; AND and OR are documented with two operands: nest them, never list three.
+
+; P_verstr - "version.revision" text of a getversion result.
+(procedure P_verstr #vs_ver
+    (cat (shiftright #vs_ver 16) "." (BITAND #vs_ver 65535))
+)
+
+; P_copyver - install one versioned file (library or device) safely.
+; A newer bundled copy upgrades.  At the same version the checksum decides: an
+; identical file is kept, a different one is replaced without asking - that is
+; a rebuild of the same version, and the archive's files belong together.  Only an
+; installed copy NEWER than the bundled one asks first.  getversion returns 0 for
+; a missing file, so a fresh install always copies.  (optional "force") clears a
+; delete-protected destination left by a previous install.
+; Returns 1 when the installed file is now the bundled build (copied, or found
+; identical), 0 when a newer copy was kept.
+(procedure P_copyver #cv_src #cv_destdir #cv_name
+    (set #cv_dest (tackon #cv_destdir #cv_name))
+    (set #cv_do 1)
+    (set #cv_bundled 1)
+    (if (exists #cv_dest (noreq))
+        (
+            (set #cv_have (getversion #cv_dest))
+            (set #cv_new (getversion #cv_src))
+            (if (> #cv_have #cv_new)
+                (
+                    (set #cv_do
+                        (askbool
+                            (prompt
+                                (cat
+                                    "The installed " #cv_name " is newer\n"
+                                    "than the one in this archive:\n\n"
+                                    "  installed: " (P_verstr #cv_have) " in " #cv_destdir "\n"
+                                    "  this archive: " (P_verstr #cv_new) "\n\n"
+                                    "Replace it with the older version?"
+                                )
+                            )
+                            (help @copylib-help)
+                            (default 0)
+                        )
+                    )
+                    (set #cv_bundled #cv_do)
+                )
+                (if (AND (= #cv_have #cv_new) (= (getsum #cv_dest) (getsum #cv_src)))
+                    (set #cv_do 0)
+                )
+            )
+        )
+    )
+    (if #cv_do
+        (copyfiles
+            (prompt (cat "Installing " #cv_name "..."))
+            (help @copylib-help)
+            (source #cv_src)
+            (dest #cv_destdir)
+            (optional "force")
+        )
+    )
+    #cv_bundled
+)
+
+; ---------------------------------------------------------------------------
+; What Kinora needs and this archive does not bring
+; ---------------------------------------------------------------------------
+
+; videocodec.library 0.6 decodes the video: 6 = (0 << 16) | 6.
+(set #missing "")
+(if (exists "LIBS:videocodec.library" (noreq))
+    (if (< (getversion "LIBS:videocodec.library") 6)
+        (set #missing (cat #missing "* videocodec.library 0.6 (an older one is here)\n"))
+    )
+    (set #missing (cat #missing "* videocodec.library 0.6, with its codecs\n"))
+)
+(if (NOT (exists "LIBS:Picasso96API.library" (noreq)))
+    (set #missing (cat #missing "* Picasso96\n"))
+)
+(if (NOT (exists "DEVS:ahi.device" (noreq)))
+    (set #missing (cat #missing "* AHI\n"))
+)
+(if (<> #missing "")
+    (if (NOT
+            (askbool
+                (prompt
+                    (cat
+                        "Kinora plays nothing without these, which\n"
+                        "were not found on this system:\n\n"
+                        #missing
+                        "\nvideocodec.library comes with the emu68\n"
+                        "driver stack.  Install Kinora anyway?"
+                    )
+                )
+                (help
+                    (cat
+                        "Kinora decodes video through\n"
+                        "videocodec.library and its codecs, shows it\n"
+                        "through Picasso96 and plays sound through\n"
+                        "AHI.  It can be installed first and the\n"
+                        "missing parts later; until then films do\n"
+                        "not open.  The ReadMe says where each part\n"
+                        "comes from."
+                    )
+                )
+                (default 1)
+            )
+        )
+        (exit (quiet))
+    )
+)
+
+; ---------------------------------------------------------------------------
+; Questions
+; ---------------------------------------------------------------------------
+
+(set #dest
+    (askdir
+        (prompt
+            (cat
+                "Kinora " #kinora-version "\n\n"
+                "Where shall the drawer \"Kinora\" be made?"
+            )
+        )
+        (help
+            (cat
+                "The program, its icon and the font it draws\n"
+                "subtitles with go into a drawer \"Kinora\"\n"
+                "inside the drawer chosen here.  The\n"
+                "libraries go to LIBS: wherever that is.\n\n"
+                @askdir-help
+            )
+        )
+        (default @default-dest)
+    )
+)
+(set #drawer (tackon #dest "Kinora"))
+(set @default-dest #drawer)
+
+(set #install-tools
+    (askbool
+        (prompt
+            (cat
+                "Install the two shell tools to C: as well?\n\n"
+                "DMXInfo says what demuxer.library makes of a\n"
+                "film, ACInfo what audiocodec.library decodes.\n"
+                "Kinora does not need them."
+            )
+        )
+        (help
+            (cat
+                "Both are small and only print.  They help\n"
+                "when a film does not play: their output says\n"
+                "what the file holds.\n\n"
+                @askbool-help
+            )
+        )
+        (default 1)
+    )
+)
+
+; ---------------------------------------------------------------------------
+; Copying
+; ---------------------------------------------------------------------------
+
+(complete 0)
+
+(makedir #drawer (infos))
+(copyfiles
+    (prompt "Copying Kinora, its icon and its font...")
+    (help @copyfiles-help)
+    (source (tackon #archive "Kinora"))
+    (dest #drawer)
+    (all)
+    (optional "force")
+)
+
+(complete 50)
+
+(P_copyver (tackon #archive "LIBS/demuxer.library") "LIBS:" "demuxer.library")
+(P_copyver (tackon #archive "LIBS/audiocodec.library") "LIBS:" "audiocodec.library")
+(if (NOT (exists "LIBS:audiocodec" (noreq))) (makedir "LIBS:audiocodec"))
+(P_copyver (tackon #archive "LIBS/audiocodec/ffmpeg.codec") "LIBS:audiocodec" "ffmpeg.codec")
+
+(complete 90)
+
+(if #install-tools
+    (copyfiles
+        (prompt "Copying DMXInfo and ACInfo to C:...")
+        (help @copyfiles-help)
+        (source (tackon #archive "C"))
+        (dest "C:")
+        (all)
+        (optional "force")
+    )
+)
+
+(complete 100)
+
+; ---------------------------------------------------------------------------
+; Done
+; ---------------------------------------------------------------------------
+
+(set #done-msg
+    (cat
+        "Kinora " #kinora-version "\n"
+        "is installed in " #drawer "\n\n"
+        "Start it from its icon, or drop films on it.\n"
+    )
+)
+(if (<> #missing "")
+    (set #done-msg
+        (cat #done-msg
+            "\nStill needed before films play:\n"
+            #missing
+        )
+    )
+)
+(set #done-msg (cat #done-msg "\nSee the ReadMe for the keys and the menus."))
+(message #done-msg (all))
+; Quiet exit: running off the end (or a plain (exit)) would add the Installer's
+; own "<APPNAME> can be found in <@default-dest>" report after this summary.
+(exit (quiet))
