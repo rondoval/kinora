@@ -1,8 +1,9 @@
 # Kinora: notes for agents
 
-A video player for AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68, and the
-two libraries it needs beside `videocodec.library`. What must not break is here; how it works
-and why is in `docs/architecture.md`.
+A video player for AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68, the two
+libraries it needs beside `videocodec.library`, and the video libraries it builds and ships
+from two submodules. What must not break is here; how it works and why is in
+`docs/architecture.md`.
 
 ## Docs
 
@@ -12,7 +13,21 @@ holds the rules only: no history, no how-it-works.
 ## Build and validate
 
 - `./build.sh` (or `scripts/docker-build.sh [--target <t>]`): everything in the build
-  container. Zero warnings; our own code is built with `-Werror`.
+  container, in this order: `external/emu68-common`, `external/videocodec-library`,
+  `external/rpivid-codec` (both into `build/video-prefix`), then Kinora. Zero warnings; our
+  own code is built with `-Werror`.
+- **Releases:** every PR to `main` bumps `project(kinora VERSION ...)` and adds its section to
+  `RELEASE-NOTES.md`, written for users (`release-checks.yml` refuses it otherwise). The tag
+  `v<version>` on `main` is the user's; `release.yml` then builds the archive without a stamp
+  and publishes it with that section. `build.yml` builds, packages and runs the code gates of
+  Kinora and both video libraries on every PR and push to `main`.
+- **The video libraries' pins:** Kinora's `main` pins each at a tagged release of its `main`
+  (their CI tags `v<version>` on merge); a pin on a `dev` commit lives on Kinora's `dev` only.
+- `external/videocodec-library` and `external/rpivid-codec` are repositories of their own:
+  each its own version, release notes and `AGENTS.md`, its suite (`tests/run.sh`, on this
+  build), and CI through `.github/workflows/component-versioning.yml`. Work in them on their
+  `dev` branch. Kinora takes `videocodec.h` from their package (`VideoCodec 0.7`), never the
+  toolchain image's copy, and ships what they install.
 - `./build.sh --package`: `build/package/Kinora-<version>-<stamp>.lha` with the Installer
   script (`installer/Install.in`). The script names its sources from its own drawer
   (`#archive`), ends with its own message and `(exit (quiet))`, and keeps every page within

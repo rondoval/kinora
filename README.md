@@ -9,29 +9,38 @@ AHI, and text subtitles are drawn into the picture. Films play in the window or 
 
 Download `Kinora-<version>.lha` and unpack it anywhere, for example with
 `lha x Kinora-<version>.lha RAM:`. It unpacks into a drawer `Kinora-<version>`: open it and
-double-click `Install`. The Installer asks where the drawer `Kinora` goes (`SYS:Utilities`
-unless you choose another) and whether the two shell tools go to `C:`, and says which of the
-parts Kinora needs (below) it did not find. Kinora can be installed first and those parts
-later; until then films do not open.
+double-click `Install`. The Installer asks what to install and where the drawer `Kinora` goes
+(`SYS:Utilities` unless you choose another), and says which of the parts Kinora needs (below)
+it did not find. Kinora can be installed first and those parts later; until then films do not
+open.
 
 | What | Where |
 |---|---|
 | `Kinora`, its icon, the drawer `Fonts` | the drawer chosen |
 | `demuxer.library`, `audiocodec.library` | `LIBS:` |
 | `ffmpeg.codec` | `LIBS:audiocodec/` |
+| the video libraries: `videocodec.library` | `LIBS:` |
+| `videocore.codec` (H.264, pictures), `rpivid.codec` (H.265 on a Pi 4 or CM4) | `LIBS:videocodec/` |
+| `VCInfo`, which checks the video libraries | `C:` |
+| `vcjpeg.datatype`, JPEG pictures on the VideoCore for every datatypes program | `SYS:Classes/DataTypes/`, its descriptor in `SYS:Storage/DataTypes/`, if wanted |
+| `VCGrab`, a screen recorder | `SYS:Tools/Commodities/`, if wanted |
 | `DMXInfo`, `ACInfo` | `C:`, if wanted |
 
-A library that is already there is replaced when the archive's is newer, or another build of
-the same version; before an older one replaces a newer one, the Installer asks. To remove
-Kinora, delete its drawer, the three libraries and the two tools. Its settings are in
-`ENVARC:Kinora.prefs`.
+The video libraries can be installed without the player, for other programs that use them;
+the player, `vcjpeg.datatype` and `VCGrab` bring them along. A library, codec or tool that is
+already there is replaced when the archive's is newer, or another build of the same version;
+before an older one replaces a newer one, the Installer asks. To remove Kinora, delete its
+drawer, the files above and the `AddDataTypes` line `vcjpeg.datatype` put in
+`S:User-Startup`. Its settings are in `ENVARC:Kinora.prefs`.
 
 ## What it needs
 
 - AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68. A Pi 3 plays H.264 only
   and is untested.
-- `videocodec.library` 0.6 with its codecs, `videocore.codec` for H.264 and `rpivid.codec` for
-  H.265, from the [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack).
+- `vchiq.device`, the link to the Pi's VideoCore, from the
+  [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (its Install script's
+  `vchiq.device`). `VCInfo` checks the video libraries and, when the VideoCore does not
+  answer, sends you to the stack's `VCHIQInfo`.
 - Picasso96 with VideoCore.card.
 - AHI.
 
@@ -138,8 +147,8 @@ Kinora's ARexx port is `KINORA`. Its commands: `PLAY`, `PAUSE`, `STOP`, `SEEK <m
 Docker is the only requirement; the cross compiler comes in a container.
 
 ```sh
-git submodule update --init
-./build.sh                               # the build
+git submodule update --init --recursive
+./build.sh                               # the build, the video libraries first
 ./build.sh --package                     # the release archive, with its Installer script
 tests/run.sh host                        # the code gates
 tests/run.sh hw --server amiga-pi4       # the tests on an Amiga (docs/architecture.md, section 13)
@@ -160,5 +169,12 @@ copyright (c) 2026 The FreeType Project (www.freetype.org). All rights reserved.
 DejaVu Sans comes with its own licence
 ([dist/fonts/DejaVuSans.license.txt](dist/fonts/DejaVuSans.license.txt)).
 
+The video libraries are repositories of their own, built from the submodules
+`external/videocodec-library` and `external/rpivid-codec`: `videocodec.library`,
+`videocore.codec`, `vcjpeg.datatype`, `VCInfo` and `VCGrab` are under the BSD 3-Clause License
+([videocodec-library](https://github.com/rondoval/videocodec-library)), `rpivid.codec` under
+the GNU General Public License, version 2, with code from Linux's HEVC driver
+([rpivid-codec](https://github.com/rondoval/rpivid-codec)).
+
 The archive holds all of these in its drawer `Licenses`, and the headers for programs that use
-the two libraries in `Developer/include`.
+the libraries in `Developer/include`.

@@ -1,0 +1,44 @@
+name: Release
+
+# A tag v<version> (the user's, on main after a merged PR): the release archive built as
+# build.yml builds it, without a build stamp, published as a GitHub release with this
+# version's section of RELEASE-NOTES.md as its text.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: The tag names the version CMakeLists.txt says
+        run: |
+          set -euo pipefail
+          ver=$(grep -m1 -iE 'project[ \t]*\(.*VERSION' CMakeLists.txt | sed -nE 's/.*VERSION[ \t]+([0-9]+(\.[0-9]+)*).*/\1/p')
+          [ "v$ver" = "${{ github.ref_name }}" ] || { echo "::error::tag ${{ github.ref_name }}, but CMakeLists.txt says $ver"; exit 1; }
+
+      - name: Build and package (in the toolchain container)
+        run: ./scripts/docker-build.sh --target package
+
+      - name: This version's release notes
+        run: |
+          set -euo pipefail
+          # the first "# Release notes" section, without its heading
+          awk '/^# Release notes/ { n++; next } n == 1' RELEASE-NOTES.md > notes.md
+          test -s notes.md || { echo "::error::RELEASE-NOTES.md has no section for this version"; exit 1; }
+
+      - name: Create the GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: "Kinora ${{ github.ref_name }}"
+          files: build/package/Kinora-*.lha
+          body_path: notes.md

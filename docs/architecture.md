@@ -618,7 +618,9 @@ kinora/
   tools/            DMXInfo, ACInfo
   ffmpeg/           how FFmpeg is built: CMake glue, the Amiga shim and atomics
   freetype/         how FreeType is built for the player
-  external/         FFmpeg n9.0.2, FreeType, emu68-common: submodules, never modified
+  external/         FFmpeg n9.0.2, FreeType, emu68-common: submodules, never modified;
+                    videocodec-library and rpivid-codec: the video libraries, repositories
+                    of their own that Kinora builds and ships
   patches/          our FFmpeg patches, applied to a copy in the build tree
   scripts/          docker-build.sh, build-ffmpeg.sh
   include/          public headers, sfd files
@@ -632,6 +634,14 @@ kinora/
   are linked into the two binaries.
 - `emu68-common` is a submodule, used for what it has: the library skeleton, debug output,
   the test harness.
+- **The video libraries are built here, not taken from elsewhere.** `videocodec-library`
+  (`videocodec.library`, `videocore.codec`, `vcjpeg.datatype`, `VCInfo`, `VCGrab`) and
+  `rpivid-codec` (`rpivid.codec`) are submodules, each a repository with its own version.
+  `scripts/docker-build.sh` builds them after `emu68-common` into `build/video-prefix`;
+  Kinora finds `VideoCodec` there, takes `videocodec.h` from it, and its install tree and
+  archive carry their files. Each part lives with its main backend: what is built from FFmpeg
+  is in this tree, the VideoCore's in `videocodec-library`. `vchiq.device`, the link under
+  `videocore.codec`, stays in the Emu68 driver stack.
 - **One version for the repository,** which every binary reports.
 - **No example programs:** Kinora is the example of the libraries' use, and `DMXInfo` and
   `ACInfo` show what each library makes of a file.

@@ -37,6 +37,11 @@ INSTALLED = (
     ("tools/DMXInfo", "C:DMXInfo"),
     ("tools/ACInfo", "C:ACInfo"),
     ("player/Kinora", KINORA),
+    # the video libraries Kinora ships, from their prefix in the build dir
+    ("video-prefix/LIBS/videocodec.library", "LIBS:videocodec.library"),
+    ("video-prefix/LIBS/videocodec/videocore.codec", "LIBS:videocodec/videocore.codec"),
+    ("video-prefix/LIBS/videocodec/rpivid.codec", "LIBS:videocodec/rpivid.codec"),
+    ("video-prefix/C/VCInfo", "C:VCInfo"),
 )
 ICON = ("dist/Kinora.info", KINORA + ".info")
 FONT = "dist/fonts/DejaVuSans.ttf"          # the font subtitles are drawn with, in the drawer Fonts beside the program
