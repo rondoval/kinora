@@ -133,6 +133,7 @@ void film_follow(struct gui *gui);
 void picture_box(struct gui *gui, struct display_place *place);
 void key_used(struct gui *gui, ULONG code);
 void film_play(struct gui *gui, ULONG index);
+void film_close(struct gui *gui);
 void films_ask(struct gui *gui, BOOL add);
 void subtitle_ask(struct gui *gui);
 void font_ask(struct gui *gui);

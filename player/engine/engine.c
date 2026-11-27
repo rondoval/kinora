@@ -147,7 +147,7 @@ static void pass(struct engine *engine)
 }
 
 /**
- * film_close() - Close the decoders, the file and the subtitles: the engine stands empty.
+ * film_close() - Close the decoders, the file and the subtitles: the engine stands empty, its counts at 0.
  * @engine: the engine
  */
 static void film_close(struct engine *engine)
@@ -161,6 +161,9 @@ static void film_close(struct engine *engine)
 		display_clear(engine->display);
 	engine->state = ENGINE_EMPTY;
 	clock_set(&engine->clock, 0);
+	engine->frames_shown = 0;
+	engine->frames_dropped = 0;
+	memset(&engine->video_shape, 0, sizeof(engine->video_shape));
 }
 
 /**
@@ -211,10 +214,7 @@ static LONG handle_open(struct engine *engine, struct engine_message *message)
 	film_close(engine);
 	video_place(engine, message->with.open.place);
 	engine->error = 0;
-	engine->frames_shown = 0;
-	engine->frames_dropped = 0;
 	stats_reset(engine);
-	memset(&engine->video_shape, 0, sizeof(engine->video_shape));
 
 	LONG error = file_open(engine, message->with.open.name);
 	if (error == 0)
@@ -235,7 +235,7 @@ static LONG handle_open(struct engine *engine, struct engine_message *message)
 }
 
 /**
- * handle_close() - COMMAND_CLOSE.
+ * handle_close() - COMMAND_CLOSE: the engine stands empty, and what stopped the film is forgotten.
  * @engine:  the engine
  * @message: the command
  *
@@ -245,6 +245,7 @@ static LONG handle_close(struct engine *engine, struct engine_message *message)
 {
 	(void)message;
 	film_close(engine);
+	engine->error = 0;
 	return 0;
 }
 
@@ -476,10 +477,10 @@ static LONG handle_statistics(struct engine *engine, struct engine_message *mess
 	BOOL changed = engine->statistics.panel_on != message->with.statistics.panel;
 	engine->statistics.panel_on = message->with.statistics.panel;
 	if (message->with.statistics.text != NULL)
-		stats_write(engine, message->with.statistics.text, message->with.statistics.room);
+		stats_write(engine, message->with.statistics.text, message->with.statistics.room, TRUE);
 	if (changed && engine->state != ENGINE_EMPTY)
 	{
-		stats_write(engine, engine->statistics.text, sizeof(engine->statistics.text));
+		stats_write(engine, engine->statistics.text, sizeof(engine->statistics.text), FALSE);
 		engine->statistics.text_version++;
 		if (engine->state != ENGINE_PLAYING)
 			reseek(engine);
@@ -709,7 +710,7 @@ LONG engine_open(struct engine *engine, CONST_STRPTR name, const struct display_
 }
 
 /**
- * engine_close() - Close the file.
+ * engine_close() - Close the file; the picture's place is made black.
  * @engine: the engine
  */
 void engine_close(struct engine *engine)

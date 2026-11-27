@@ -3,17 +3,19 @@
  * gui_screen.c - full screen: the picture on a screen of its own, and the
  * controls shown over its foot while the pointer moves.
  *
- * The screen is in the Workbench's mode and up to three pictures tall; the
- * engine writes the pictures into it and scrolls (display_screen.c).  A
+ * The screen is in the Workbench's mode and up to DISPLAY_PARTS pictures
+ * tall; the decoder writes the pictures into it and the display scrolls
+ * (display_screen.c).  A
  * borderless window over its first picture height takes the keys and the
  * pointer's moves.
  *
- * A moving pointer brings up a strip of controls along the screen's foot.
- * While it shows, the picture stands in the screen's first picture height
- * only, above the strip, and is not scrolled: a window can be drawn over one
- * place of the bitmap, not over a picture that moves between three.  When
- * the pointer has been still for a few seconds the strip goes and the
- * picture has the whole screen again.
+ * A moving pointer brings up a strip of controls along the screen's foot,
+ * a window at the foot of the first picture height.  While it shows, the
+ * picture stands in the rows above it in every picture height and is
+ * scrolled as ever; the display copies the strip's rows from the first
+ * into the others (docs/architecture.md 7.1).  When the pointer has been
+ * still for a few seconds the strip goes and the picture has the whole
+ * screen again.
  */
 #include <exec/memory.h>
 #include <intuition/screens.h>

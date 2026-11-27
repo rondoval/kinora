@@ -20,7 +20,7 @@
 #include "../audio/audio_out.h"
 
 #define PORT_NAME "KINORA"
-#define RESULT_SIZE 1024       /* an answer, with its NUL */
+#define RESULT_SIZE 2048       /* an answer, with its NUL: STATISTICS's is the longest */
 #define WORD_SIZE 32           /* a command's name, with its NUL */
 #define LIST_LINE_MOST 128     /* the most a line of TRACKS or CHAPTERS takes, with its NUL */
 #define FILM_LINE_EXTRA 4      /* a line of PLAYLIST beyond its path: the mark, a space, the newline, the NUL */
@@ -75,6 +75,19 @@ static void run_stop(struct gui *gui, const char *argument, char *result)
 	(void)argument;
 	(void)result;
 	film_stop(gui);
+}
+
+/**
+ * run_close() - CLOSE: close the film; the playlist stays.
+ * @gui:      the front
+ * @argument: unused
+ * @result:   unused
+ */
+static void run_close(struct gui *gui, const char *argument, char *result)
+{
+	(void)argument;
+	(void)result;
+	film_close(gui);
 }
 
 /**
@@ -387,6 +400,7 @@ static const struct rexx_command commands[] = {
     {"STOP",       run_stop},
     {"SEEK",       run_seek},
     {"OPEN",       run_open},
+    {"CLOSE",      run_close},
     {"ADD",        run_add},
     {"SUBTITLES",  run_subtitles},
     {"NEXT",       run_next},

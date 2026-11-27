@@ -10,6 +10,8 @@ from pathlib import Path
 
 CONTAINERS = ("a.mkv", "b.mp4", "c.ts")     # H.264+AAC+SubRip in Matroska, H.265+AC-3 in MP4, H.264+E-AC-3 in a transport stream
 AUDIO = ("aac_st", "aac_51", "ac3_51", "eac3_51", "dts_51", "mp3_st", "opus_51", "flac_st", "vorbis_st")
+# six seconds of each codec ffmpegvideo.codec decodes, with the host's decode beside each (<clip>.host.md5)
+VIDEO = ("mpeg1.mkv", "mpeg2.ts", "mpeg4.mkv", "xvid.mkv", "divx3.mkv", "msmpeg4v2.mkv", "h263.mkv", "flv1.mkv", "theora.mkv")
 FILM = "film.mkv"           # 720p25, 40 s, two audio tracks, a SubRip track, three chapters
 PLAIN = "plain.mkv"         # the same picture, one audio track; plain.srt lies beside it
 SHORT = "short.mkv"         # six seconds, for the playlist

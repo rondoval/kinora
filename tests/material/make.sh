@@ -5,13 +5,16 @@
 #   tests/material/make.sh         after scripts/docker-build.sh (it needs the patched FFmpeg source)
 #
 # The films come from the host's ffmpeg. The references come from host builds of the very
-# FFmpeg source the Amiga libraries are built from: ffprobe's packet counts, and each audio
-# film's packets (pkdump) decoded by the same decoders (adec-host), so that the Amiga's
-# samples can be asked to match to the last bit but one.
+# FFmpeg source the Amiga libraries are built from, in the same configurations: ffprobe's
+# packet counts, each audio film's packets (pkdump) decoded by the same decoders (adec-host), so
+# that the Amiga's samples can be asked to match to the last bit but one, and each video
+# film's packets decoded by the same decoders (vdec-host), an MD5 a picture, which the
+# Amiga's must equal.
 #
-# Needs gcc, make and ffmpeg (with libx264, libx265, libmp3lame, libopus, libvorbis) on the
-# host. Everything lands in build/test-material/; what is there already is left alone, so
-# delete the directory to make it all again.
+# Needs gcc, make and ffmpeg (with libx264, libx265, libmp3lame, libopus, libvorbis, libxvid,
+# libtheora, libvpx) on the host. Everything lands in build/test-material/; what is there is
+# left alone while the configurations below and the clips' list stay as they are, so delete
+# the directory to make it all again.
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -20,33 +23,54 @@ SOURCE="$ROOT/build/ffmpeg/source"
 OUT="$ROOT/build/test-material"
 HOST="$ROOT/build/host"
 [ -f "$SOURCE/configure" ] || { echo "build first: scripts/docker-build.sh" >&2; exit 1; }
-[ -f "$OUT/.complete" ] && { echo "material in $OUT (complete)"; exit 0; }
-mkdir -p "$OUT" "$HOST"
 
 COMMON="--disable-everything --disable-programs --disable-doc --disable-network --disable-pthreads
 	--disable-autodetect --disable-asm --disable-inline-asm --disable-debug --disable-avdevice
 	--disable-avfilter --disable-swscale --disable-iconv --enable-static --pkg-config=false"
+# scripts/build-ffmpeg.sh's configurations, and the file protocol the host's demuxer reads by
 DEMUXER="--disable-swresample --enable-demuxer=matroska,mov,mpegts --enable-protocol=file
-	--enable-parser=h264,hevc,aac,aac_latm,ac3,mpegaudio,dca,opus,vorbis,flac
-	--enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc"
+	--enable-parser=h264,hevc,aac,aac_latm,ac3,mpegaudio,dca,opus,vorbis,flac,mpegvideo,mpeg4video
+	--enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,mpeg4_unpack_bframes"
 AUDIO="--disable-avformat --enable-swresample
-	--enable-decoder=aac,aac_latm,ac3,eac3,dca,mp3,mp2,opus,vorbis,flac,truehd
+	--enable-decoder=aac,aac_latm,ac3_fixed,eac3,dca,mp3,mp2,opus,vorbis,flac,truehd
 	--enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_u8,pcm_f32le,pcm_f32be"
+VIDEO="--disable-avformat --disable-swresample
+	--enable-decoder=mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,h263,h263i,flv,theora
+	--enable-parser=mpegvideo,mpeg4video"
+CLIPS="video clips 2" # the clips' list below: a new one makes everything again
+
+# The material made from another list or configurations is made again
+STAMP=$(printf '%s\n' "$DEMUXER" "$AUDIO" "$VIDEO" "$CLIPS" "$(cat "$SOURCE/.kinora-source")" | sha256sum | cut -d' ' -f1)
+if [ -f "$OUT/.complete" ] && [ "$(cat "$OUT/.complete")" = "$STAMP" ]; then
+	echo "material in $OUT (complete)"
+	exit 0
+fi
+rm -rf "$OUT"
+mkdir -p "$OUT" "$HOST"
 
 host_ffmpeg() # <name> <options>
 {
-	[ -f "$HOST/$1/libavutil/libavutil.a" ] && return
+	local wanted
+	wanted=$(printf '%s\n%s\n' "$2" "$(cat "$SOURCE/.kinora-source")")
+	if [ -f "$HOST/$1/libavutil/libavutil.a" ] && [ "$(cat "$HOST/$1/kinora-config" 2>/dev/null)" = "$wanted" ]; then
+		return
+	fi
+	rm -rf "${HOST:?}/$1"
 	mkdir -p "$HOST/$1"
 	# shellcheck disable=SC2086
 	(cd "$HOST/$1" && "$SOURCE/configure" $COMMON $2 > configure.log && make -j"$(nproc)" > make.log 2>&1)
+	printf '%s\n' "$wanted" > "$HOST/$1/kinora-config"
 }
 host_ffmpeg demuxer "$DEMUXER"
 host_ffmpeg audio "$AUDIO"
+host_ffmpeg video "$VIDEO"
 
 gcc -O2 -I"$HOST/demuxer" -I"$SOURCE" "$HERE/pkdump.c" -o "$OUT/pkdump" \
 	-L"$HOST/demuxer/libavformat" -L"$HOST/demuxer/libavcodec" -L"$HOST/demuxer/libavutil" -lavformat -lavcodec -lavutil -lm
 gcc -O2 -I"$HOST/audio" -I"$SOURCE" "$HERE/adec.c" -o "$OUT/adec-host" \
 	-L"$HOST/audio/libavcodec" -L"$HOST/audio/libswresample" -L"$HOST/audio/libavutil" -lavcodec -lswresample -lavutil -lm
+gcc -O2 -I"$HOST/video" -I"$SOURCE" "$HERE/vdec.c" -o "$OUT/vdec-host" \
+	-L"$HOST/video/libavcodec" -L"$HOST/video/libavutil" -lavcodec -lavutil -lm
 
 cd "$OUT"
 FF="ffmpeg -nostdin -loglevel error -y"
@@ -101,5 +125,33 @@ $FF -i plain.mkv -f lavfi -t 40 -i sine=frequency=880:sample_rate=48000 -i plain
 $FF -f lavfi -i testsrc2=size=640x360:rate=25 -f lavfi -i sine=frequency=660:sample_rate=48000 -t 6 \
 	-c:v libx264 -pix_fmt yuv420p -g 25 -c:a aac -ac 2 short.mkv
 
-touch .complete
+# six seconds of each video codec the 68k decodes (ffmpegvideo.codec), a moving picture with
+# B-pictures where the codec has them, in the containers they come in; the host's decode of
+# each, an MD5 a picture. VP8 is there to be refused.
+MOVING="-f lavfi -i testsrc2=s=720x400:r=25:d=6"
+CIF="-f lavfi -i testsrc2=s=352x288:r=25:d=6"
+PAL="-f lavfi -i testsrc2=s=720x576:r=50:d=6"
+INTERLACE="tinterlace=interleave_top,setfield=tff"
+video_clip() # <name> <input> <encoder options>
+{
+	local name=$1 input=$2
+	shift 2
+	# shellcheck disable=SC2086
+	$FF $input -an "$@" "$name"
+	./pkdump "$name" "$name.kpv" video > /dev/null
+	./vdec-host "$name.kpv" "$name.host.md5" > "$name.vdec"
+}
+video_clip mpeg1.mkv "$MOVING" -c:v mpeg1video -b:v 2M -bf 2 -g 15
+video_clip mpeg2.ts "$PAL" -vf "$INTERLACE" -r 25 -c:v mpeg2video -b:v 5M -bf 2 -g 12 -flags +ilme+ildct -top 1 -alternate_scan 1
+video_clip mpeg4.mkv "$MOVING" -c:v mpeg4 -b:v 1500k -bf 2 -g 50 -flags +mv4+qpel
+# Xvid without B-pictures: libxvid through ffmpeg stores their decode order as Matroska's times
+video_clip xvid.mkv "$MOVING" -c:v libxvid -b:v 1200k -bf 0 -g 50
+video_clip divx3.mkv "$MOVING" -c:v msmpeg4 -b:v 1200k -g 50 -vtag DIV3
+video_clip msmpeg4v2.mkv "$MOVING" -c:v msmpeg4v2 -b:v 1200k -g 50 -vtag MP42
+video_clip h263.mkv "$CIF" -c:v h263 -b:v 800k -g 50
+video_clip flv1.mkv "$MOVING" -c:v flv -b:v 1200k -g 50
+video_clip theora.mkv "$MOVING" -c:v libtheora -b:v 1200k -g 50
+$FF $MOVING -an -c:v libvpx -b:v 1200k vp8.webm
+
+printf '%s\n' "$STAMP" > .complete
 echo "material in $OUT"

@@ -129,7 +129,7 @@ struct statistics
 	ULONG audio_bytes;      /* and of audio packets */
 
 	/* The second before */
-	ULONG last_rate;        /* pictures shown, in hundredths a second */
+	ULONG last_rate;        /* pictures shown a second, in hundredths (RATE_HUNDREDTHS) */
 	LONG last_behind_mean;  /* milliseconds they were behind on average */
 	LONG last_behind_most;  /* and at most */
 	ULONG last_video_kbps;  /* the video read, in kbit/s */
@@ -161,6 +161,16 @@ struct reads
 };
 
 /* The engine */
+/* What the video decoder is asked to leave out (VCA_Skip) while pictures come too late, and since when */
+struct video_skip
+{
+	ULONG level;      /* VCSK_*, the one the decoder has */
+	VCTime changed;   /* clock_wall() at the last step up or back */
+	VCTime lowered;   /* clock_wall() at the last step back, 0 when the last step was up */
+	VCTime hold;      /* how long without a dropped picture before a step back */
+	VCTime last_drop; /* clock_wall() at the last dropped picture */
+};
+
 struct engine
 {
 	/* The task */
@@ -196,6 +206,8 @@ struct engine
 	struct DMXStream video_stream;               /* that stream */
 	struct queue video_queue;                    /* its packets read ahead */
 	struct VCSession *video_decoder;             /* the decoder, NULL for none */
+	char video_backend[VC_BACKEND_NAME_SIZE];    /* the backend videocodec.library gave it (VCA_BackendName) */
+	char video_converter[VC_BACKEND_NAME_SIZE];  /* the backend of the converter behind it, empty for none (VCA_ConverterName) */
 	BYTE video_signal;                           /* the signal it wakes the engine with */
 	struct VCPacket *free_packets[FREE_PACKETS]; /* its input packets waiting to be filled */
 	ULONG free_packet_count;                     /* how many */
@@ -210,6 +222,7 @@ struct engine
 	struct display *display;                     /* where pictures go, NULL for nowhere */
 	BOOL first_shown;                            /* a picture was shown since the file was opened or moved in */
 	BOOL catching_up;                            /* since a move no picture came in time yet: late ones are not counted as dropped */
+	struct video_skip skip;                      /* what the decoder is asked to leave out while it falls behind (architecture 6.3) */
 	ULONG frames_shown;                          /* pictures shown */
 	ULONG frames_dropped;                        /* pictures too late to show */
 
@@ -218,6 +231,7 @@ struct engine
 	struct DMXStream audio_stream;     /* that stream */
 	struct queue audio_queue;          /* its packets read ahead */
 	struct ACSession *audio_decoder;   /* the decoder, NULL for none */
+	char audio_backend[AC_BACKEND_NAME_SIZE]; /* the backend audiocodec.library gave it (ACA_BackendName) */
 	struct audio_out *audio_out;       /* the sound output, opened at the first decoded samples */
 	BYTE audio_signal;                 /* the signal the output wakes the engine with */
 	BOOL audio_32bit;                  /* ahi.device takes 32-bit samples, so the decoder gives them (audio_open()) */
@@ -292,7 +306,7 @@ void audio_flush(struct engine *engine);
 void stats_reset(struct engine *engine);
 void stats_count_seek(struct engine *engine, VCTime time);
 void stats_count_frame(struct engine *engine, const struct VCFrame *frame);
-void stats_write(struct engine *engine, char *to, ULONG room);
+void stats_write(struct engine *engine, char *to, ULONG room, BOOL inside);
 void stats_tick(struct engine *engine);
 
 #endif /* KINORA_ENGINE_PRIVATE_H */

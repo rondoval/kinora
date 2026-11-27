@@ -127,7 +127,8 @@ ULONG display_choose_format(const struct display *display, ULONG codec)
  * @task:   the engine's task
  * @signal: what to signal it with when a picture has reached the screen
  *
- * Return: the display, NULL for nowhere, without memory, or for a screen whose bitmap the decoder cannot write.
+ * Return: the display, NULL for nowhere, without memory, or for a screen whose bitmap the decoder cannot write or
+ * whose flipper did not start.
  */
 struct display *display_open(const struct display_place *place, struct Task *task, ULONG signal)
 {
@@ -145,7 +146,7 @@ struct display *display_open(const struct display_place *place, struct Task *tas
 	display->flip_to = NO_PART;
 	if (place->screen != NULL && !screen_open(display))
 	{
-		FreeVec(display);
+		display_close(display);
 		return NULL;
 	}
 	return display;

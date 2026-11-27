@@ -182,6 +182,19 @@ void film_play(struct gui *gui, ULONG index)
 }
 
 /**
+ * film_close() - Close the film: the player stands empty, its picture black, the full screen left; the playlist stays.
+ * @gui: the front
+ */
+void film_close(struct gui *gui)
+{
+	engine_close(gui->engine);
+	if (gui->screen != NULL)
+		full_screen_toggle(gui);
+	menus_make(gui);
+	film_follow(gui);
+}
+
+/**
  * film_add() - Put a film behind the playlist's films.
  * @gui:  the front
  * @name: its path
@@ -416,13 +429,18 @@ void font_ask(struct gui *gui)
 }
 
 /**
- * play_toggle() - Play, pause, or start an ended film again.
+ * play_toggle() - Play, pause, or start an ended film again; with none open, the playlist's film.
  * @gui: the front
  */
 void play_toggle(struct gui *gui)
 {
 	struct engine_status status;
 	engine_status(gui->engine, &status);
+	if (status.state == ENGINE_EMPTY)
+	{
+		film_play(gui, gui->playlist.current); /* closed, or it did not open: open it (again) */
+		return;
+	}
 	if (status.state == ENGINE_ENDED)
 		engine_seek(gui->engine, 0);
 	engine_play(gui->engine, status.state != ENGINE_PLAYING);

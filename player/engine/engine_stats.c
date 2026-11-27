@@ -3,8 +3,8 @@
  * engine_stats.c - the statistics: what the engine counts while it plays,
  * summed up once a second, and the lines of text that say it.
  *
- * The text is what the panel in the picture shows and what the front's
- * STATISTICS command answers.
+ * The text is what the panel in the picture shows; the front's STATISTICS
+ * command answers it with lines on the engine's inner workings behind.
  */
 #include <stdarg.h>
 #include <stdio.h>
@@ -23,6 +23,9 @@
 #define BYTES_PER_KB 1024
 #define MB_PER_HIGH_WORD 4096 /* megabytes a unit of a file size's upper 32 bits stands for */
 #define BYTES_PER_MB_SHIFT 20
+#define RATE_HUNDREDTHS 100 /* statistics.last_rate: pictures a second, in hundredths */
+#define MICROSECONDS_PER_TENTH 100000
+#define TENTHS_PER_SECOND 10
 
 /* The text being written */
 struct text
@@ -33,9 +36,22 @@ struct text
 };
 
 static const char *const video_codec_names[] = {
-    [VCC_H264]  = "H.264",
-    [VCC_MJPEG] = "MJPEG",
-    [VCC_H265]  = "H.265",
+    [VCC_H264]    = "H.264",
+    [VCC_MJPEG]   = "MJPEG",
+    [VCC_H265]    = "H.265",
+    [VCC_MPEG1]   = "MPEG-1",
+    [VCC_MPEG2]   = "MPEG-2",
+    [VCC_MPEG4]   = "MPEG-4",
+    [VCC_MSMPEG4] = "MS-MPEG4",
+    [VCC_H263]    = "H.263",
+    [VCC_Theora]  = "Theora",
+};
+
+/* What the decoder leaves out (VCA_Skip), for the pictures' line */
+static const char *const skip_names[] = {
+    [VCSK_None]         = "",
+    [VCSK_NonReference] = "; skipping B-pictures",
+    [VCSK_NonKey]       = "; key frames only",
 };
 
 static const char *const audio_codec_names[] = {
@@ -87,6 +103,17 @@ static void text_add_time(struct text *text, VCTime time)
 	         seconds / (SECONDS_PER_MINUTE * MINUTES_PER_HOUR),
 	         seconds / SECONDS_PER_MINUTE % MINUTES_PER_HOUR,
 	         seconds % SECONDS_PER_MINUTE);
+}
+
+/**
+ * text_add_seconds() - Add a length of time as seconds with their tenths.
+ * @text: the text
+ * @time: the time, not negative
+ */
+static void text_add_seconds(struct text *text, VCTime time)
+{
+	unsigned long tenths = time > 0 ? (unsigned long)(time / MICROSECONDS_PER_TENTH) : 0;
+	text_add(text, "%lu.%lu s", tenths / TENTHS_PER_SECOND, tenths % TENTHS_PER_SECOND);
 }
 
 /**
@@ -212,18 +239,9 @@ static void line_video(struct engine *engine, struct text *text)
 		unsigned long milli = (unsigned long)((unsigned long long)stream->FrameRate.Num * KILO / (ULONG)stream->FrameRate.Den);
 		text_add(text, ", %lu.%03lu pictures a second", milli / KILO, milli % KILO);
 	}
-	const struct statistics *statistics = &engine->statistics;
-	const struct VCRect *picture = &statistics->picture_rect;
-	text_add(text, ", shown at %ldx%ld, at %ld,%ld of %lux%lu",
-	         (long)picture->Width,
-	         (long)picture->Height,
-	         (long)picture->X,
-	         (long)picture->Y,
-	         (unsigned long)statistics->frame_width,
-	         (unsigned long)statistics->frame_height);
-	ULONG parts = display_parts(engine->display);
-	if (parts != 0)
-		text_add(text, ", a screen of %lu parts", (unsigned long)parts);
+	const struct VCRect *picture = &engine->statistics.picture_rect;
+	if (picture->Width != 0)
+		text_add(text, ", shown at %ldx%ld", (long)picture->Width, (long)picture->Height);
 	text_add(text, "\n");
 }
 
@@ -231,6 +249,9 @@ static void line_video(struct engine *engine, struct text *text)
  * line_audio() - The audio stream and where its sound goes.
  * @engine: the engine
  * @text:   the text
+ *
+ * "shared" is ahi.device's writes in place of the unit's own hardware: by
+ * the user's choice, or because another program held the unit.
  */
 static void line_audio(struct engine *engine, struct text *text)
 {
@@ -240,67 +261,144 @@ static void line_audio(struct engine *engine, struct text *text)
 		text_add(text, "Audio: none\n");
 		return;
 	}
-	text_add(text, "Audio: %s %lu Hz, %lu channels, to AHI unit %lu as %s in %u bits\n",
+	text_add(text, "Audio: %s %lu Hz, %lu channels, to AHI unit %lu as %s in %u bits%s\n",
 	         name_of(audio_codec_names, ARRAY_COUNT(audio_codec_names), stream->Codec),
 	         (unsigned long)stream->SampleRate,
 	         (unsigned long)stream->Channels,
 	         (unsigned long)engine->setup.audio_unit,
 	         engine->audio_surround ? "7.1" : "stereo",
-	         engine->audio_32bit ? 32u : 16u);
+	         engine->audio_32bit ? 32u : 16u,
+	         engine->audio_out != NULL && !audio_out_low_level(engine->audio_out) ? ", shared" : "");
 }
 
 /**
- * line_rate() - The last second: pictures shown and dropped, how far behind the clock they were shown, the bytes read.
+ * line_codecs() - The backends that decode, as the libraries chose them, and the converter behind the video's.
  * @engine: the engine
  * @text:   the text
  */
-static void line_rate(struct engine *engine, struct text *text)
+static void line_codecs(struct engine *engine, struct text *text)
+{
+	text_add(text, "Codecs:");
+	if (engine->video_decoder != NULL)
+	{
+		text_add(text, " video %s", engine->video_backend);
+		if (engine->video_converter[0] != 0)
+			text_add(text, ", converted by %s", engine->video_converter);
+	}
+	if (engine->audio_decoder != NULL)
+		text_add(text, "%s audio %s", engine->video_decoder != NULL ? ";" : "", engine->audio_backend);
+	text_add(text, "\n");
+}
+
+/**
+ * line_pictures() - The last second's pictures: how many a second, the drops, how late they were shown, what the decoder leaves out.
+ * @engine: the engine
+ * @text:   the text
+ */
+static void line_pictures(struct engine *engine, struct text *text)
 {
 	const struct statistics *statistics = &engine->statistics;
-	text_add(text, "Pictures: %lu.%02lu a second; %lu shown, %lu dropped\n",
-	         (unsigned long)statistics->last_rate / 100,
-	         (unsigned long)statistics->last_rate % 100,
-	         (unsigned long)engine->frames_shown,
-	         (unsigned long)engine->frames_dropped);
-	text_add(text, "Behind the clock: %ld ms on average, %ld ms at most\n",
+	if (engine->video_decoder == NULL)
+		return;
+	text_add(text, "Pictures: %lu.%02lu a second, %lu dropped; %ld ms late, %ld at most%s\n",
+	         (unsigned long)statistics->last_rate / RATE_HUNDREDTHS,
+	         (unsigned long)statistics->last_rate % RATE_HUNDREDTHS,
+	         (unsigned long)engine->frames_dropped,
 	         (long)statistics->last_behind_mean,
-	         (long)statistics->last_behind_most);
-	text_add(text, "Read: video %lu kbit/s, audio %lu kbit/s\n",
-	         (unsigned long)statistics->last_video_kbps,
-	         (unsigned long)statistics->last_audio_kbps);
+	         (long)statistics->last_behind_most,
+	         name_of(skip_names, ARRAY_COUNT(skip_names), engine->skip.level));
 }
 
 /**
- * line_buffers() - What waits: packets read ahead, pictures decoded, sound in the output's ring.
+ * line_bit_rate() - The last second's bit rate of each stream played, as read.
  * @engine: the engine
  * @text:   the text
  */
-static void line_buffers(struct engine *engine, struct text *text)
+static void line_bit_rate(struct engine *engine, struct text *text)
+{
+	const struct statistics *statistics = &engine->statistics;
+	text_add(text, "Bit rate:");
+	if (engine->video_decoder != NULL)
+		text_add(text, " video %lu kbit/s", (unsigned long)statistics->last_video_kbps);
+	if (engine->audio_decoder != NULL)
+		text_add(text, "%s audio %lu kbit/s", engine->video_decoder != NULL ? "," : "", (unsigned long)statistics->last_audio_kbps);
+	text_add(text, "\n");
+}
+
+/**
+ * line_ahead() - How far the reading and the decoding are ahead of the clock: what the queues hold, the pictures waiting, the sound in the ring.
+ * @engine: the engine
+ * @text:   the text
+ */
+static void line_ahead(struct engine *engine, struct text *text)
 {
 	unsigned long ring = 0;
 	if (engine->audio_out != NULL && engine->audio_stream.SampleRate != 0)
 		ring = (unsigned long)((unsigned long long)audio_out_queued(engine->audio_out) * KILO / engine->audio_stream.SampleRate);
 	ObtainSemaphore(&engine->queue_lock); /* the reader adds to the queues meanwhile */
-	text_add(text, "Waiting: video %lu packets (%ld ms, %lu KB), audio %lu packets (%ld ms)\n",
-	         (unsigned long)engine->video_queue.count,
-	         (long)(queue_duration(&engine->video_queue) / MICROSECONDS_PER_MS),
-	         (unsigned long)engine->video_queue.bytes / BYTES_PER_KB,
-	         (unsigned long)engine->audio_queue.count,
-	         (long)(queue_duration(&engine->audio_queue) / MICROSECONDS_PER_MS));
+	VCTime video = queue_duration(&engine->video_queue);
+	VCTime audio = queue_duration(&engine->audio_queue);
 	ReleaseSemaphore(&engine->queue_lock);
-	text_add(text, "Decoded: %lu pictures, %lu ms of sound\n", (unsigned long)engine->ready_count, ring);
-	if (engine->audio_out != NULL)
-	{
-		ULONG chunks;
-		ULONG restarts;
-		ULONG step;
-		audio_out_counts(engine->audio_out, &chunks, &restarts, &step);
-		text_add(text, "Sound: %s, %lu chunks played, started anew %lu times (step %lu)\n",
-		         audio_out_low_level(engine->audio_out) ? "AHI's low-level calls" : "ahi.device's writes",
-		         (unsigned long)chunks,
-		         (unsigned long)restarts,
-		         (unsigned long)step);
-	}
+	text_add(text, "Read ahead: video ");
+	text_add_seconds(text, video);
+	text_add(text, ", audio ");
+	text_add_seconds(text, audio);
+	text_add(text, "; decoded: %lu pictures, %lu ms of sound\n", (unsigned long)engine->ready_count, ring);
+}
+
+/**
+ * line_frame() - The frame the last picture was shown in, the picture's place in it, and a full screen's parts.
+ * @engine: the engine
+ * @text:   the text
+ */
+static void line_frame(struct engine *engine, struct text *text)
+{
+	const struct statistics *statistics = &engine->statistics;
+	if (engine->video_decoder == NULL)
+		return;
+	text_add(text, "Frame: %lux%lu, the picture at %ld,%ld",
+	         (unsigned long)statistics->frame_width,
+	         (unsigned long)statistics->frame_height,
+	         (long)statistics->picture_rect.X,
+	         (long)statistics->picture_rect.Y);
+	ULONG parts = display_parts(engine->display);
+	if (parts != 0)
+		text_add(text, ", a screen of %lu parts", (unsigned long)parts);
+	text_add(text, "\n");
+}
+
+/**
+ * line_queues() - The packets read ahead, counted.
+ * @engine: the engine
+ * @text:   the text
+ */
+static void line_queues(struct engine *engine, struct text *text)
+{
+	ObtainSemaphore(&engine->queue_lock); /* the reader adds to the queues meanwhile */
+	text_add(text, "Queues: video %lu packets, %lu KB; audio %lu packets\n",
+	         (unsigned long)engine->video_queue.count,
+	         (unsigned long)engine->video_queue.bytes / BYTES_PER_KB,
+	         (unsigned long)engine->audio_queue.count);
+	ReleaseSemaphore(&engine->queue_lock);
+}
+
+/**
+ * line_sound() - What the audio output has done: the chunks AHI played, and its restarts.
+ * @engine: the engine
+ * @text:   the text
+ */
+static void line_sound(struct engine *engine, struct text *text)
+{
+	if (engine->audio_out == NULL)
+		return;
+	ULONG chunks;
+	ULONG restarts;
+	ULONG step;
+	audio_out_counts(engine->audio_out, &chunks, &restarts, &step);
+	text_add(text, "Sound: %lu chunks played, started anew %lu times (step %lu)\n",
+	         (unsigned long)chunks,
+	         (unsigned long)restarts,
+	         (unsigned long)step);
 }
 
 /**
@@ -330,9 +428,9 @@ static void line_seek(struct engine *engine, struct text *text)
 	const struct statistics *statistics = &engine->statistics;
 	if (statistics->seek_target == VC_TIME_UNKNOWN)
 		return;
-	text_add(text, "Moved to ");
+	text_add(text, "Last move: to ");
 	text_add_time(text, statistics->seek_target);
-	text_add(text, ": video from ");
+	text_add(text, ", video from ");
 	text_add_time(text, statistics->seek_video);
 	text_add(text, ", audio from ");
 	text_add_time(text, statistics->seek_audio);
@@ -346,14 +444,14 @@ static void line_seek(struct engine *engine, struct text *text)
  */
 static void line_state(struct engine *engine, struct text *text)
 {
-	text_add(text, "File %s; ", engine->file_end ? "read to its end" : "being read");
-	text_add(text, "video: %lu packets to fill, %s%s%s%s; ",
+	text_add(text, "State: file %s; ", engine->file_end ? "read to its end" : "being read");
+	text_add(text, "video %lu packets to fill, %s%s%s%s; ",
 	         (unsigned long)engine->free_packet_count,
 	         display_busy(engine->display) ? "display busy" : "display free",
 	         engine->first_shown ? "" : ", no picture yet",
 	         engine->video_end_sent ? ", end sent" : "",
 	         engine->video_done ? ", done" : "");
-	text_add(text, "audio: %s%s%s",
+	text_add(text, "audio %s%s%s\n",
 	         engine->pending_held ? "samples pending" : "nothing pending",
 	         engine->audio_end_sent ? ", end sent" : "",
 	         engine->audio_done ? ", done" : "");
@@ -364,8 +462,12 @@ static void line_state(struct engine *engine, struct text *text)
  * @engine: the engine
  * @to:     gets the text, lines separated by newlines
  * @room:   its bytes
+ * @inside: also the lines on the engine's inner workings, after the panel's (ARexx STATISTICS)
+ *
+ * The panel's lines say what is played, by what, and whether it keeps up;
+ * the others are for looking into a film that does not play as it should.
  */
-void stats_write(struct engine *engine, char *to, ULONG room)
+void stats_write(struct engine *engine, char *to, ULONG room, BOOL inside)
 {
 	struct text text = {.chars = to, .room = room};
 	to[0] = 0;
@@ -374,8 +476,15 @@ void stats_write(struct engine *engine, char *to, ULONG room)
 	line_file(engine, &text);
 	line_video(engine, &text);
 	line_audio(engine, &text);
-	line_rate(engine, &text);
-	line_buffers(engine, &text);
+	line_codecs(engine, &text);
+	line_pictures(engine, &text);
+	line_bit_rate(engine, &text);
+	line_ahead(engine, &text);
+	if (!inside)
+		return;
+	line_frame(engine, &text);
+	line_queues(engine, &text);
+	line_sound(engine, &text);
 	line_clock(engine, &text);
 	line_seek(engine, &text);
 	line_state(engine, &text);
@@ -394,7 +503,7 @@ void stats_tick(struct engine *engine)
 		return;
 	unsigned long long ms = (unsigned long long)(passed / MICROSECONDS_PER_MS);
 
-	statistics->last_rate = (ULONG)((unsigned long long)statistics->frames * 100 * KILO / ms);
+	statistics->last_rate = (ULONG)((unsigned long long)statistics->frames * RATE_HUNDREDTHS * KILO / ms);
 	VCTime behind_mean = statistics->behind_measured != 0 ? statistics->behind_sum / (VCTime)statistics->behind_measured : 0;
 	statistics->last_behind_mean = (LONG)(behind_mean / MICROSECONDS_PER_MS);
 	statistics->last_behind_most = (LONG)(statistics->behind_most / MICROSECONDS_PER_MS);
@@ -409,7 +518,7 @@ void stats_tick(struct engine *engine)
 	statistics->second_start += passed;
 	if (statistics->panel_on)
 	{
-		stats_write(engine, statistics->text, sizeof(statistics->text));
+		stats_write(engine, statistics->text, sizeof(statistics->text), FALSE);
 		statistics->text_version++;
 	}
 }

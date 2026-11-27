@@ -75,14 +75,19 @@ LONG video_open(struct engine *engine)
 	    {VCA_SigMask, 1UL << engine->video_signal},
 	    {VCA_Framed, TRUE},
 	    {VCA_InputCount, INPUT_PACKETS},
+	    {tag_if(stream->Width != 0, VCA_Width), stream->Width}, /* the container's word on the size: MS-MPEG4 carries none */
+	    {tag_if(stream->Height != 0, VCA_Height), stream->Height},
 	    {tag_if(has_extradata, VCA_Extradata), (ULONG)stream->Extradata},
 	    {tag_if(has_extradata, VCA_ExtradataSize), stream->ExtradataSize},
 	    {tag_if(has_rate, VCA_FrameRateNum), (ULONG)stream->FrameRate.Num},
 	    {tag_if(has_rate, VCA_FrameRateDen), (ULONG)stream->FrameRate.Den},
 	    {tag_if(stream->ColorSpace != VCCS_Unknown, VCA_ColorSpace), stream->ColorSpace},
+	    {VCA_BackendName, (ULONG)engine->video_backend},
+	    {VCA_ConverterName, (ULONG)engine->video_converter},
 	    {TAG_DONE, 0},
 	};
 	engine->video_decoder = VC_OpenSessionTagList(tags);
+	skip_reset(engine);
 	return engine->video_decoder != NULL ? 0 : ENGINE_ERR_VIDEO;
 }
 
@@ -290,14 +295,18 @@ static void frame_overlay(struct engine *engine, struct VCFrame *frame)
  *
  * After a move the sound may start a little later than the first picture's
  * time, and the pictures between are late: they are not counted as dropped,
- * until a picture other than the first comes in time.
+ * until a picture other than the first comes in time.  A picture dropped
+ * otherwise asks the decoder to skip (skip_more()).
  */
 static void frame_count(struct engine *engine, BOOL shown)
 {
 	if (shown)
 		engine->frames_shown++;
 	else if (!engine->catching_up)
+	{
 		engine->frames_dropped++;
+		skip_more(engine);
+	}
 	if (shown && engine->first_shown)
 		engine->catching_up = FALSE;
 }
@@ -408,6 +417,7 @@ void video_pump(struct engine *engine)
 		Signal(FindTask(NULL), 1UL << engine->video_signal); /* more may wait: another pass, after the commands */
 	video_feed(engine);
 	frames_show(engine);
+	skip_less(engine);
 	VCTime again = display_poll(engine->display);
 	if (again > 0)
 		engine_wake_in(engine, again);

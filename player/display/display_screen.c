@@ -160,10 +160,12 @@ static void flip_wait(struct display *display)
  * @display: the display, its place set
  *
  * The bitmap must be in the card's memory, its rows whole groups of 32
- * pixels, and a whole number of the place's height tall.  Without a flipper
- * process the engine scrolls for itself.
+ * pixels, and at least one of the place's heights tall.  A flipper that
+ * does not start refuses the screen: the engine scrolling for itself waits
+ * in ScrollVPort() and drops pictures (docs/architecture.md 7.1).
  *
- * Return: TRUE, FALSE for a bitmap the decoder cannot write.
+ * Return: TRUE, FALSE for a bitmap the decoder cannot write or no flipper;
+ * display_close() then frees what was made.
  */
 BOOL screen_open(struct display *display)
 {
@@ -182,6 +184,8 @@ BOOL screen_open(struct display *display)
 	display->part_count = (ULONG)display->place.screen->Height / part_rows(display);
 	if (display->part_count > DISPLAY_PARTS)
 		display->part_count = DISPLAY_PARTS;
+	if (display->part_count == 0)
+		return FALSE;
 	if (foot_bytes(display) != 0)
 		display->foot_fresh = AllocVec(foot_bytes(display), MEMF_ANY); /* without it the front's rows show in the first part only */
 
@@ -191,7 +195,7 @@ BOOL screen_open(struct display *display)
 	                                     NP_Priority, (ULONG)(LONG)(display->task->tc_Node.ln_Pri + 1),
 	                                     NP_StackSize, FLIPPER_STACK,
 	                                     TAG_DONE);
-	return display->part_count != 0;
+	return display->flipper != NULL;
 }
 
 /**
@@ -305,7 +309,7 @@ static void flip_settle(struct display *display)
  * @display: the display, no flip under way
  * @frame:   the picture: one of the parts
  *
- * The part on display leaves it.  With a flipper the scroll is asked for and
+ * The part on display leaves it.  The flipper is asked for the scroll, and
  * the display is busy until it is done.
  */
 void screen_show(struct display *display, struct VCFrame *frame)
@@ -320,15 +324,8 @@ void screen_show(struct display *display, struct VCFrame *frame)
 	foot_refresh(display);
 	display->part_leaving = display->part_shown;
 	display->part_shown = part;
-	if (display->flipper != NULL)
-	{
-		display->flip_to = part;
-		Signal(&display->flipper->pr_Task, SIGBREAKF_CTRL_F);
-	}
-	else
-	{
-		part_scroll_to(display, part);
-	}
+	display->flip_to = part;
+	Signal(&display->flipper->pr_Task, SIGBREAKF_CTRL_F);
 }
 
 /**

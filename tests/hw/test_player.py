@@ -27,6 +27,11 @@ HOG = ("ChangeTaskPri 15\n" + "List >NIL: SYS:Libs ALL\nList >NIL: SYS:Devs ALL\
 RC_ERROR = 10               # ARexx's return code for a command the port does not know
 
 
+def statistics(player) -> dict[str, str]:
+    """STATISTICS's lines by the word before their colon."""
+    return dict(line.split(": ", 1) for line in player.rexx("STATISTICS").splitlines() if ": " in line)
+
+
 def advance(player, seconds: float) -> tuple[int, int]:
     """How far the film's time and its count of pictures shown move in @seconds of the host's time."""
     before = player.status()
@@ -103,6 +108,19 @@ def test_plays_a_film_to_its_end(player, material):
     assert end.shown >= films.SHORT_MS * films.FRAME_RATE // 1000 - 3 and end.dropped <= 2
 
 
+@pytest.mark.parametrize("clip", ["xvid.mkv", "mpeg2.ts"])
+def test_plays_a_film_the_68k_decodes(player, material, clip):
+    """Six seconds of MPEG-4 Part 2 and of interlaced MPEG-2, decoded by ffmpegvideo.codec and converted by the
+    VideoCore into the window: every picture shown, the film ended, nothing failed; the statistics name both."""
+    pictures = len(material.path(clip + ".host.md5").read_text().split())
+    player.start(material.ram(clip))
+    end = player.wait_for(lambda s: s.state == "ENDED", 30, "the film's end")
+    assert end.error == 0 and end.width == 720
+    assert end.shown >= pictures - 3 and end.dropped <= 2
+    codecs = statistics(player)["Codecs"]
+    assert codecs.startswith("video ffmpegvideo.codec, converted by videocore.codec"), codecs
+
+
 def test_keeps_time(player, material):
     """Ten seconds of the host's clock are ten seconds of film, at the film's picture rate."""
     player.start(material.ram(films.FILM))
@@ -125,6 +143,24 @@ def test_pause_holds_the_film(player, material):
     player.rexx("PLAY")
     resumed = player.playing_at(held.position_ms + 1000)
     assert resumed.position_ms < held.position_ms + 4000
+
+
+def test_close_empties_the_player_and_play_opens_the_film_again(player, device, material):
+    """CLOSE: no film, the picture box cleared, no statistics, the playlist as it was; a click on the picture then
+    plays the playlist's film from its start."""
+    film = material.ram(films.FILM)
+    player.start(film)
+    player.playing_at(2000)
+    player.rexx("CLOSE")
+    closed = player.wait_for(lambda s: s.state == "EMPTY", 5, "the film closed")
+    assert closed.shown == 0 and closed.error == 0 and player.rexx("STATISTICS") == ""
+    assert player.rexx("PLAYLIST").splitlines() == [f"* {film}"]
+    box = subtitle_box(device, "closed", 0.15, 0.6)
+    assert float(box.std()) < 2, "the picture box cleared to one colour"
+    x, y, w, h = screen.window(device, "Kinora")
+    screen.click(device, x + w // 2, y + h // 3)
+    again = player.playing_at(1000)
+    assert again.position_ms < 4000 and again.error == 0
 
 
 @pytest.mark.parametrize("target", [20000, 5000, 36000])
@@ -274,7 +310,7 @@ def test_the_picture_follows_the_window(player, material):
     """The window made smaller, then larger: the picture is shown at the new size each time, and the film runs on."""
     player.start(material.ram(films.FILM))
     player.playing_at(1000)
-    shown_at = lambda: tuple(int(n) for n in player.rexx("STATISTICS").split("shown at ")[1].split(",")[0].split("x"))
+    shown_at = lambda: tuple(int(n) for n in statistics(player)["Video"].split("shown at ")[1].split("x"))
     first = shown_at()
     player.rexx("SIZE 700 460")
     time.sleep(3)
@@ -345,9 +381,10 @@ def test_statistics_are_told_and_shown(player, device, material):
     """STATISTICS answers what is played and how; with ON a panel of them stands in the picture's corner."""
     player.start(material.ram(films.FILM))
     player.playing_at(3000)
-    lines = dict(line.split(": ", 1) for line in player.rexx("STATISTICS").splitlines() if ": " in line)
+    lines = statistics(player)
     assert lines["Video"].startswith("H.264 1280x720, 25.000 pictures a second")
     assert lines["Audio"].startswith("AAC 48000 Hz, 2 channels")
+    assert lines["Codecs"] == "video videocore.codec; audio ffmpegaudio.codec"
     rate = float(lines["Pictures"].split()[0])
     assert 23.5 < rate < 26.5 and "running" in lines["Clock"]
     corner = (0.06, 0.25)
@@ -478,24 +515,24 @@ def test_settings_are_kept(player, device, material):
 
 def test_the_unit_is_taken_or_shared(player, device, material):
     """The sound takes the unit's hardware through AHI's low-level calls; UNIT n SHARED sends it through ahi.device's
-    writes instead, and UNIT n takes the hardware again; the film plays on through both changes. Needs a unit no
-    other program holds."""
+    writes instead (the statistics' audio line says "shared"), and UNIT n takes the hardware again; the film plays on
+    through both changes. Needs a unit no other program holds."""
     with settings_kept(device):
         kept = dict(line.split("=", 1) for line in device.download_text(PREFS).splitlines() if "=" in line)
         unit = kept.get("unit", "0")
         player.start(material.ram(films.FILM))
         player.rexx(f"UNIT {unit}")
         player.playing_at(2000)
-        sound = lambda: dict(line.split(": ", 1) for line in player.rexx("STATISTICS").splitlines() if ": " in line)["Sound"]
-        assert sound().startswith("AHI's low-level calls")
+        shared = lambda: statistics(player)["Audio"].endswith(", shared")
+        assert not shared()
         player.rexx(f"UNIT {unit} SHARED")
         time.sleep(1)
-        assert sound().startswith("ahi.device's writes")
+        assert shared()
         moved, _ = advance(player, 3)
         assert moved > 2500, f"shared: {moved} ms in 3 s"
         player.rexx(f"UNIT {unit}")
         time.sleep(1)
-        assert sound().startswith("AHI's low-level calls")
+        assert not shared()
         moved, _ = advance(player, 3)
         assert moved > 2500 and player.status().error == 0, f"taken again: {moved} ms in 3 s"
 

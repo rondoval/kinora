@@ -46,6 +46,7 @@ void audio_open(struct engine *engine)
 	                                           ACA_PcmFlags, stream->PcmFlags,
 	                                           ACA_OutputFormat, engine->audio_32bit ? ACF_S32 : ACF_S16,
 	                                           ACA_OutputChannels, engine->audio_surround ? 0 : AUDIO_STEREO_CHANNELS,
+	                                           ACA_BackendName, (ULONG)engine->audio_backend,
 	                                           TAG_DONE);
 }
 

@@ -30,6 +30,7 @@ def test_decodes_as_the_host_does(device, material, stem):
     try:
         decode = acinfo(device, f"{material.ram(stem + '.mkv')} TO {out}")
         assert decode.rc == 0 and decode.num("decode") == ACERR_END and decode.num("bad") == 0, decode.text
+        assert decode.facts["backend"] == "ffmpegaudio.codec"
         got = np.frombuffer(device.download(out), dtype=">i2").astype(np.int32)
     finally:
         device.delete(out)

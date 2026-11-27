@@ -50,6 +50,7 @@ enum menu_id
 	MENU_OPEN = 1,
 	MENU_ADD,
 	MENU_SUBTITLE_OPEN,
+	MENU_CLOSE,
 	MENU_QUIT,
 	MENU_FULL_SCREEN,
 	MENU_PLAY,
@@ -250,6 +251,7 @@ static void table_fill(struct gui *gui)
 	item_add(&table, NM_ITEM, (CONST_STRPTR) "Open...", (CONST_STRPTR) "O", MENU_OPEN, -1);
 	item_add(&table, NM_ITEM, (CONST_STRPTR) "Add to the playlist...", (CONST_STRPTR) "A", MENU_ADD, -1);
 	item_add(&table, NM_ITEM, (CONST_STRPTR) "Open subtitles...", (CONST_STRPTR) "S", MENU_SUBTITLE_OPEN, -1);
+	item_add(&table, NM_ITEM, (CONST_STRPTR) "Close", NULL, MENU_CLOSE, -1);
 	item_add(&table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
 	item_add(&table, NM_ITEM, (CONST_STRPTR) "Quit", (CONST_STRPTR) "Q", MENU_QUIT, -1);
 	view_add(&table);
@@ -371,31 +373,50 @@ static BOOL play_used(struct gui *gui, ULONG id)
 }
 
 /**
+ * project_used() - Act on an item of the Project menu.
+ * @gui: the front
+ * @id:  the item's menu_id
+ *
+ * Return: TRUE if the item was one of them.
+ */
+static BOOL project_used(struct gui *gui, ULONG id)
+{
+	switch (id)
+	{
+	case MENU_OPEN:
+	case MENU_ADD:
+		films_ask(gui, id == MENU_ADD);
+		return TRUE;
+	case MENU_SUBTITLE_OPEN:
+		subtitle_ask(gui);
+		return TRUE;
+	case MENU_CLOSE:
+		film_close(gui);
+		return TRUE;
+	case MENU_QUIT:
+		gui->quit = TRUE;
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+/**
  * item_used() - Act on one menu item.
  * @gui: the front
  * @id:  the item's menu_id
  */
 static void item_used(struct gui *gui, ULONG id)
 {
-	if (play_used(gui, id))
+	if (play_used(gui, id) || project_used(gui, id))
 		return;
 	switch (id)
 	{
-	case MENU_OPEN:
-	case MENU_ADD:
-		films_ask(gui, id == MENU_ADD);
-		break;
-	case MENU_SUBTITLE_OPEN:
-		subtitle_ask(gui);
-		break;
 	case MENU_FONT:
 		font_ask(gui);
 		break;
 	case MENU_FONT_OWN:
 		font_set(gui, (CONST_STRPTR) "");
-		break;
-	case MENU_QUIT:
-		gui->quit = TRUE;
 		break;
 	case MENU_FULL_SCREEN:
 		full_screen_toggle(gui);

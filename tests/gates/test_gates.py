@@ -11,7 +11,7 @@ pytestmark = pytest.mark.gates
 
 TESTS = Path(__file__).resolve().parents[1]
 ROOT = TESTS.parent
-FOLDERS = ("demuxer", "audiocodec", "ffmpeg", "player", "tools", "include")
+FOLDERS = ("demuxer", "audiocodec", "videocodec-ffmpeg", "ffmpeg", "player", "tools", "include")
 INHERITED = "0.0:"                 # no code predates the gate, so no ceiling is inherited
 COMPLEXITY_LIMIT = 10              # without an entry in complexity-allow.txt
 COMPLEXITY_ALLOWED = 15            # the highest ceiling an entry gives
