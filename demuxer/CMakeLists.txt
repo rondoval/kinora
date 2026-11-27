@@ -21,6 +21,7 @@ target_include_directories(demuxer_library PRIVATE
 target_link_libraries(demuxer_library PRIVATE Kinora::ffmpeg_demuxer)
 # libnix's library start-up: the resident tag and the standard vectors
 target_link_options(demuxer_library PRIVATE -ramiga-lib -s)
+kinora_ffmpeg_binary(demuxer_library)
 set_target_properties(demuxer_library PROPERTIES
     OUTPUT_NAME demuxer
     SUFFIX ".library"

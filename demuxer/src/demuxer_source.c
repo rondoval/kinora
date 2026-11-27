@@ -7,7 +7,8 @@
  * through io_read() and io_seek() only, so the reader decides how the file is
  * reached.  H.264 and H.265 streams that the file holds as length-prefixed
  * NAL units go through FFmpeg's bitstream filter to an Annex-B byte stream,
- * their configuration with them.
+ * their configuration with them, and MPEG-4 Part 2 streams through the one
+ * that unpacks packed B-pictures (codec_filter()).
  */
 #include <string.h>
 #include <proto/dos.h>
@@ -91,7 +92,7 @@ static AVBSFContext *filter_make(const AVStream *stream, const char *name)
 }
 
 /**
- * filters_make() - Give every stream that needs one its Annex-B filter.
+ * filters_make() - Give every stream that needs one its filter (codec_filter()).
  * @source: the source, its streams known
  *
  * Return: 0, or DMXERR_NOMEM.
@@ -105,7 +106,7 @@ static LONG filters_make(struct DMXSource *source)
 	for (unsigned int i = 0; i < count; i++)
 	{
 		const AVStream *stream = source->format->streams[i];
-		const char *name = codec_annexb_filter(stream->codecpar);
+		const char *name = codec_filter(stream->codecpar);
 		if (name == NULL)
 			continue;
 		source->filters[i] = filter_make(stream, name);
@@ -290,7 +291,7 @@ static ULONG stream_flags(const AVStream *stream)
  * @index:  the stream's number
  * @stream: the caller's structure, its Size set
  *
- * The configuration is the Annex-B filter's where the stream has one.
+ * The configuration is the stream's filter's where it has one (codec_filter()).
  *
  * Return: 0, or DMXERR_BADPARAM for a number past the last stream.
  */

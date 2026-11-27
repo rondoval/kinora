@@ -31,6 +31,9 @@
  * - H.264 and H.265 packets are Annex-B byte streams whatever the file holds,
  *   and the stream's Extradata is its parameter sets the same way: what
  *   videocodec.library takes.
+ * - Every video packet holds whole pictures: MPEG-4 Part 2's packed
+ *   B-pictures come unpacked, a picture a packet, and MPEG-1 and MPEG-2 in a
+ *   transport stream are cut into pictures.
  * - Calls return 0 or a DMXERR_*.
  */
 #ifndef LIBRARIES_DEMUXER_H

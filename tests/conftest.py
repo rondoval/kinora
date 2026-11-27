@@ -33,9 +33,11 @@ KINORA = "SYS:Utilities/Kinora/Kinora"
 INSTALLED = (
     ("demuxer/demuxer.library", "LIBS:demuxer.library"),
     ("audiocodec/audiocodec.library", "LIBS:audiocodec.library"),
-    ("audiocodec/ffmpeg.codec", "LIBS:audiocodec/ffmpeg.codec"),
+    ("audiocodec/ffmpegaudio.codec", "LIBS:audiocodec/ffmpegaudio.codec"),
+    ("videocodec-ffmpeg/ffmpegvideo.codec", "LIBS:videocodec/ffmpegvideo.codec"),
     ("tools/DMXInfo", "C:DMXInfo"),
     ("tools/ACInfo", "C:ACInfo"),
+    ("tools/VCDecode", "C:VCDecode"),
     ("player/Kinora", KINORA),
     # the video libraries Kinora ships, from their prefix in the build dir
     ("video-prefix/LIBS/videocodec.library", "LIBS:videocodec.library"),
@@ -67,6 +69,7 @@ def device(request, rundir, capture):
     dev = plugin.connect(request, capture)
     dev.break_all("Kinora")
     dev.exec("MakeDir >NIL: LIBS:audiocodec", timeout=15)
+    dev.exec("Delete >NIL: LIBS:audiocodec/ffmpeg.codec QUIET", timeout=15)  # the backend's name until 0.2, as the Installer does
     dev.exec("MakeDir >NIL: SYS:Utilities/Kinora", timeout=15)
     dev.exec("MakeDir >NIL: SYS:Utilities/Kinora/Fonts", timeout=15)
     files = build_files(config)

@@ -39,7 +39,7 @@ LONG DMX_GetChapter(struct DMXSource *source asm("a0"), ULONG index asm("d0"), s
 /* The library's functions in the order of sfd/demuxer_lib.sfd, after the standard vectors libnix's start-up lists first */
 __attribute__((section(".list___FuncTable__"), used)) APTR demuxer_functions[] = {
     (APTR)DMX_OpenTagList, (APTR)DMX_Close,         (APTR)DMX_GetInfo, (APTR)DMX_GetStream,  (APTR)DMX_SelectStreams,
-    (APTR)DMX_ReadPacket,  (APTR)DMX_ReleasePacket, (APTR)DMX_Seek,    (APTR)DMX_GetChapter, (APTR)-1,
+    (APTR)DMX_ReadPacket,  (APTR)DMX_ReleasePacket, (APTR)DMX_Seek,    (APTR)DMX_GetChapter, KINORA_PGO_DUMP_ENTRY (APTR)-1,
 };
 
 /**

@@ -86,7 +86,7 @@ struct ACSession; /* an open decoder; the library's own */
 #define ACA_OutputFormat (ACA_Base + 8)   /* ULONG: ACF_*; ACF_S16 without the tag */
 #define ACA_OutputChannels (ACA_Base + 9) /* ULONG: mix down to 1, 2 or 6 channels when the stream has more; 0 or no tag: as the stream */
 #define ACA_ErrorPtr (ACA_Base + 10)      /* LONG *: gets the ACERR_* when the open fails */
-#define ACA_Backend (ACA_Base + 11)       /* STRPTR: this backend and no other ("ffmpeg" or "ffmpeg.codec") */
+#define ACA_Backend (ACA_Base + 11)       /* STRPTR: this backend and no other ("ffmpegaudio" or "ffmpegaudio.codec") */
 
 /* How uncompressed samples are laid out (ACA_PcmFlags, DMXStream.PcmFlags) */
 #define ACPCM_BigEndian (1UL << 0) /* the samples' byte order */
@@ -151,7 +151,7 @@ struct ACCodecInfo
 	ULONG Codec;                        /* ACC_* */
 	LONG Priority;                      /* of the backend's rows for one codec the highest gets the session */
 	char Name[AC_CODEC_NAME_SIZE];      /* the codec, for people: "AC-3" */
-	char Backend[AC_BACKEND_NAME_SIZE]; /* the backend's file name: "ffmpeg.codec" */
+	char Backend[AC_BACKEND_NAME_SIZE]; /* the backend's file name: "ffmpegaudio.codec" */
 };
 
 /* Whether a structure of the given Size reaches a field */

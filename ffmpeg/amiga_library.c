@@ -46,6 +46,19 @@ LIST_END(".list___EXIT_LIST__end", "a");
 LIST_END(".end_of_lists", "a");
 LIST_HEAD(".dlist___LIB_LIST__", "aw", "___LIB_LIST__");
 LIST_END(".end_of_dlists", "aw");
+#ifdef KINORA_PGO_GENERATE
+/*
+ * The heads of libnix's constructor and destructor lists, which the profiling code of a
+ * profile-generating build registers through (each instrumented object's constructor calls
+ * __gcov_init()).  gcc puts constructors in .list___CTOR_LIST__.<priority> and destructors in
+ * .list___DTOR_LIST__.<priority>; libnix's __initcpp() and __exitcpp(), entries of the init
+ * and exit lists, walk them, but only a program's start-up defines the heads.  Each list ends
+ * at the next section's head, a zero word: the destructors' at the exit list's.  The link
+ * asks for __initcpp (-u ___initcpp), which nothing else pulls in.
+ */
+LIST_HEAD(".list___CTOR_LIST__", "a", "___CTOR_LIST__");
+LIST_HEAD(".list___DTOR_LIST__", "a", "___DTOR_LIST__");
+#endif
 extern const long __INIT_LIST__[];
 extern const long __EXIT_LIST__[];
 extern long __LIB_LIST__[];

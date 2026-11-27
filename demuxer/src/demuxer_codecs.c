@@ -23,8 +23,13 @@ static const struct codec_name codec_names[] = {
     {AV_CODEC_ID_MPEG1VIDEO, VCC_MPEG1},
     {AV_CODEC_ID_MPEG2VIDEO, VCC_MPEG2},
     {AV_CODEC_ID_MPEG4, VCC_MPEG4},
+    {AV_CODEC_ID_MSMPEG4V1, VCC_MSMPEG4}, /* the version goes by the FourCC (DMXStream.Tag) */
+    {AV_CODEC_ID_MSMPEG4V2, VCC_MSMPEG4},
     {AV_CODEC_ID_MSMPEG4V3, VCC_MSMPEG4},
     {AV_CODEC_ID_H263, VCC_H263},
+    {AV_CODEC_ID_H263P, VCC_H263},
+    {AV_CODEC_ID_H263I, VCC_H263},
+    {AV_CODEC_ID_FLV1, VCC_H263},
     {AV_CODEC_ID_VP8, VCC_VP8},
     {AV_CODEC_ID_VP9, VCC_VP9},
     {AV_CODEC_ID_AV1, VCC_AV1},
@@ -164,14 +169,21 @@ ULONG codec_color_space(const AVCodecParameters *parameters)
 }
 
 /**
- * codec_annexb_filter() - The bitstream filter that makes a stream's packets an Annex-B byte stream.
+ * codec_filter() - The bitstream filter that makes a stream's packets what the decoders take.
  * @parameters: the stream's
  *
- * Return: its name; NULL for a stream that needs none: another codec, or
- * H.264 or H.265 already in start codes (no avcC or hvcC record).
+ * H.264 and H.265 held as length-prefixed NAL units (an avcC or hvcC record) become an
+ * Annex-B byte stream.  MPEG-4 Part 2 has its packed B-pictures (DivX's and Xvid's way in
+ * AVI and in Matroska's VfW mode: a P- and a B-picture in one packet, a placeholder in the
+ * next) put each in a packet of its own, so that every packet is one picture at its time; a
+ * stream without them passes as it is.
+ *
+ * Return: its name; NULL for a stream that needs none.
  */
-const char *codec_annexb_filter(const AVCodecParameters *parameters)
+const char *codec_filter(const AVCodecParameters *parameters)
 {
+	if (parameters->codec_id == AV_CODEC_ID_MPEG4)
+		return "mpeg4_unpack_bframes";
 	if (parameters->extradata_size == 0 || parameters->extradata[0] != RECORD_VERSION)
 		return NULL;
 	if (parameters->codec_id == AV_CODEC_ID_H264)

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""audiocodec.library and ffmpeg.codec through ACInfo: the codec table, nine decodes against the host's, the mix-down
+"""audiocodec.library and ffmpegaudio.codec through ACInfo: the codec table, nine decodes against the host's, the mix-down
 and the 32-bit output."""
 import numpy as np
 import pytest
@@ -17,10 +17,10 @@ RATE = 48000
 
 @pytest.mark.smoke
 def test_codec_table_lists_every_codec(device):
-    """The library finds ffmpeg.codec in LIBS:audiocodec and lists a row for each codec it has a number for."""
+    """The library finds ffmpegaudio.codec in LIBS:audiocodec and lists a row for each codec it has a number for."""
     rows = codec_table(device)
     assert sorted(int(row["codec"]) for row in rows) == list(CODECS)
-    assert {row["backend"] for row in rows} == {"ffmpeg.codec"}
+    assert {row["backend"] for row in rows} == {"ffmpegaudio.codec"}
 
 
 @pytest.mark.parametrize("stem", films.AUDIO)

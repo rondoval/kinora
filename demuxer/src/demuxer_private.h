@@ -48,7 +48,7 @@ struct DMXSource
 	struct reader reader;      /* the file */
 	AVFormatContext *format;   /* FFmpeg's demuxer */
 	AVIOContext *io;           /* its reads, through the reader */
-	AVBSFContext **filters;    /* per stream: what makes its packets an Annex-B byte stream, NULL for none */
+	AVBSFContext **filters;    /* per stream: what makes its packets what the decoders take (codec_filter()), NULL for none */
 	ULONG selected;            /* the streams whose packets DMX_ReadPacket() gives, a bit each */
 };
 
@@ -67,6 +67,6 @@ ULONG codec_number(const AVCodecParameters *parameters);
 ULONG codec_tag(uint32_t tag);
 ULONG codec_color_space(const AVCodecParameters *parameters);
 ULONG codec_pcm_flags(enum AVCodecID id);
-const char *codec_annexb_filter(const AVCodecParameters *parameters);
+const char *codec_filter(const AVCodecParameters *parameters);
 
 #endif /* DEMUXER_PRIVATE_H */
