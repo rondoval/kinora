@@ -87,6 +87,7 @@ struct ACSession; /* an open decoder; the library's own */
 #define ACA_OutputChannels (ACA_Base + 9) /* ULONG: mix down to 1, 2 or 6 channels when the stream has more; 0 or no tag: as the stream */
 #define ACA_ErrorPtr (ACA_Base + 10)      /* LONG *: gets the ACERR_* when the open fails */
 #define ACA_Backend (ACA_Base + 11)       /* STRPTR: this backend and no other ("ffmpegaudio" or "ffmpegaudio.codec") */
+#define ACA_BackendName (ACA_Base + 12)   /* char *, room for AC_BACKEND_NAME_SIZE: gets the file name of the backend the session went to, empty when refused */
 
 /* How uncompressed samples are laid out (ACA_PcmFlags, DMXStream.PcmFlags) */
 #define ACPCM_BigEndian (1UL << 0) /* the samples' byte order */
