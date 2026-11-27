@@ -1,0 +1,4 @@
+ffmpeg 9.0.2
+patches d389421bb59106a99978420ee047925d81dbd284dabae9695622c1940c32d7c5
+flags 969a6565ffdbaeadb3fc5ec558c55a704f3fcedfa754e12d8d6b1c0be7d4f0a1
+compiler m68k-amigaos-gcc (AmigaDev) 16.2.1b 20261010182711
