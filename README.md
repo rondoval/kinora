@@ -2,8 +2,9 @@
 
 A film player for AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68, in the
 style of Media Player Classic: one window, the picture above simple playback controls,
-everything else in the menus. The Pi's VideoCore decodes the picture, the sound plays through
-AHI, and text subtitles are drawn into the picture. Films play in the window or full screen.
+everything else in the menus. The Pi's VideoCore decodes H.264 and H.265, the 68k the older
+codecs; the sound plays through AHI, and text subtitles are drawn into the picture. Films play
+in the window or full screen.
 
 ## Installing
 
@@ -18,29 +19,26 @@ open.
 |---|---|
 | `Kinora`, its icon, the drawer `Fonts` | the drawer chosen |
 | `demuxer.library`, `audiocodec.library` | `LIBS:` |
-| `ffmpeg.codec` | `LIBS:audiocodec/` |
+| `ffmpegaudio.codec` | `LIBS:audiocodec/` |
 | the video libraries: `videocodec.library` | `LIBS:` |
-| `videocore.codec` (H.264, pictures), `rpivid.codec` (H.265 on a Pi 4 or CM4) | `LIBS:videocodec/` |
+| `videocore.codec` (H.264, pictures), `rpivid.codec` (H.265), `ffmpegvideo.codec` (the older codecs) | `LIBS:videocodec/` |
 | `VCInfo`, which checks the video libraries | `C:` |
-| `vcjpeg.datatype`, JPEG pictures on the VideoCore for every datatypes program | `SYS:Classes/DataTypes/`, its descriptor in `SYS:Storage/DataTypes/`, if wanted |
+| `vcjpeg.datatype`, JPEG pictures decoded on the VideoCore | `SYS:Classes/DataTypes/` and `SYS:Storage/DataTypes/`, if wanted |
 | `VCGrab`, a screen recorder | `SYS:Tools/Commodities/`, if wanted |
-| `DMXInfo`, `ACInfo` | `C:`, if wanted |
+| `FilmInfo`, which says what a film holds | `C:`, if wanted |
 
-The video libraries can be installed without the player, for other programs that use them;
-the player, `vcjpeg.datatype` and `VCGrab` bring them along. A library, codec or tool that is
-already there is replaced when the archive's is newer, or another build of the same version;
-before an older one replaces a newer one, the Installer asks. To remove Kinora, delete its
-drawer, the files above and the `AddDataTypes` line `vcjpeg.datatype` put in
-`S:User-Startup`. Its settings are in `ENVARC:Kinora.prefs`.
+The video libraries can also be installed alone, for other programs that use them. Files
+already there are updated; the Installer asks before it replaces a newer one with an older
+one. To remove Kinora, delete its drawer, the files above and the `AddDataTypes` line
+`vcjpeg.datatype` put in `S:User-Startup`. Its settings are in `ENVARC:Kinora.prefs`.
 
 ## What it needs
 
-- AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68. A Pi 3 plays H.264 only
-  and is untested.
+- AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68. A Pi 3 has no H.265
+  decoder and is untested.
 - `vchiq.device`, the link to the Pi's VideoCore, from the
-  [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (its Install script's
-  `vchiq.device`). `VCInfo` checks the video libraries and, when the VideoCore does not
-  answer, sends you to the stack's `VCHIQInfo`.
+  [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (a part of its Install
+  script).
 - Picasso96 with VideoCore.card.
 - AHI.
 
@@ -51,27 +49,33 @@ partition, then restart the Pi (Ctrl-Amiga-Amiga, or off and on):
 dtoverlay=videocore,mem=32
 ```
 
-Full screen keeps up to four pictures in the card's memory and needs all four to play
-smoothly. Emu68's default of 16 MB holds one at 1920 by 1080 in 24 bit, beside the Workbench.
+Full screen keeps four pictures in the card's memory. Emu68's default of 16 MB has room for
+one at 1080p, and full screen then plays less smoothly than the window.
 
 ## What it plays
 
 | | Supported |
 |---|---|
 | Containers | Matroska and WebM (`.mkv`, `.webm`); MP4 and QuickTime (`.mp4`, `.m4v`, `.mov`); MPEG transport streams (`.ts`, `.m2ts`) |
-| Video | H.264; H.265 (HEVC) on a Pi 4 or CM4 |
+| Video | H.264; H.265 (HEVC) on a Pi 4 or CM4; on the 68k: MPEG-1, MPEG-2, MPEG-4 part 2 (Xvid, DivX), DivX 3, H.263, Theora |
 | Audio | AAC (LC, HE, HE v2, also as LATM in transport streams); AC-3; E-AC-3; DTS; Dolby TrueHD; MP3; MP2; Opus; Vorbis; FLAC; PCM (8, 16, 24 and 32 bit, 32-bit float) |
 | Subtitles | SubRip, ASS/SSA and MP4 timed text inside the film; a SubRip file (`.srt`) beside it or opened by hand |
 
-Not played: other video codecs (MPEG-2, MPEG-4 part 2, VC-1, VP9, AV1), picture subtitles
-(Blu-ray PGS, DVD VobSub, DVB), and anything over the network. Sound with more than two
-channels is mixed down to stereo unless the AHI unit's mode is a 7.1 one. Files over 2 GiB
-play from file systems that can seek that far; PFS3 cannot.
+Not played: other video codecs (VP8, VP9, AV1, VC-1), picture subtitles (Blu-ray PGS, DVD
+VobSub, DVB), and anything over the network.
+
+The codecs the 68k decodes take much of the processor: films of DVD size keep up, larger ones
+may not. Then Kinora skips pictures and the sound goes on. Interlaced video (from television
+and DVDs) is shown combed.
+
+Sound with more than two channels is mixed down to stereo unless the AHI unit's mode is a 7.1
+one. Files over 2 GiB play from file systems that can seek that far; PFS3 cannot.
 
 ## Using it
 
 Start Kinora from its icon, or from a shell with films to play: `Kinora film.mkv other.mp4`.
-Drop films on the window or on the icon, or open them from the Project menu.
+Drop films on the window or on the icon, or open them from the Project menu. Project > Close
+empties the player and keeps the playlist.
 
 | Key | Does |
 |---|---|
@@ -84,37 +88,31 @@ Drop films on the window or on the icon, or open them from the Project menu.
 | J (with the right Amiga key) | jump to a time |
 | I | statistics in the picture's corner, and away again |
 
-In full screen the controls come up along the screen's foot when the pointer moves, and the
-picture stands above them meanwhile. Moving in a film lands on the key frame before the place
-asked for, which can be some seconds early.
+In full screen the controls come up along the screen's foot when the pointer moves. Moving in
+a film lands on the key frame before the place asked for, which can be some seconds early.
 
 Subtitles come from the film or from a `.srt` file of the same name beside it. They are drawn
-with the font DejaVu Sans, which lies in the drawer `Fonts` beside the program and has Latin,
-Greek and Cyrillic letters. For other scripts choose a TrueType or OpenType font that has them
-(Subtitles menu, Font...). Characters are placed one by one from the left, so scripts that join
-their letters or run from the right do not come out right. Italic and bold are honoured, and
-so is a cue's wish to stand at the top. Where the picture leaves a black bar under it, a cue
-that fits goes there.
+with DejaVu Sans, which has Latin, Greek and Cyrillic letters; for other scripts choose a
+TrueType or OpenType font that has them (Subtitles menu, Font...). Scripts that join their
+letters or run from the right do not come out right.
 
-The Audio menu chooses the AHI unit the sound goes to. Kinora plays 7.1 where the unit's mode
-in AHI's prefs is a 7.1 one, and stereo otherwise, at the film's own level; when it mixes
-surround sound down to stereo, its loudest moments are softened rather than clipped. For that,
-while a film is loaded Kinora holds the unit's sound hardware, and other programs may not be
-heard through it meanwhile. With "Share the unit with other programs" (Audio menu) Kinora
-plays through ahi.device the usual way instead: others can be heard too, and Kinora plays
-6 dB quieter. It shares the unit that way as well when another program already holds it.
+The Audio menu chooses the AHI unit. Kinora plays 7.1 where the unit's mode in AHI's prefs is a
+7.1 one, and stereo otherwise. While a film is loaded Kinora holds the unit's sound hardware,
+so other programs may not be heard through it. With "Share the unit with other programs"
+(Audio menu) they can, and Kinora plays 6 dB quieter; it shares the unit that way too when
+another program already holds it.
 
 The unit, sharing it, the volume, the font and the last drawer are remembered.
 
 ## When pictures are dropped, or a film does not play
 
-The key I shows what is being played and how: the streams, pictures a second, pictures
-dropped, what waits in the buffers, the clock.
+The key I shows what is playing, which codec drivers decode it, and whether it keeps up. The
+ARexx command `STATISTICS` answers the same and more, for a report of a film that does not
+play as it should.
 
-On AmiKit, Executive moves programs' priorities by how much they use the processor, and in
-full screen that costs Kinora pictures: in a heavy 1080p film it dropped several times as
-many. To keep Kinora's own priorities, add this line to `S:Executive.prefs`, with tabs between
-its fields, and reboot:
+If you use Executive, it moves programs' priorities by how much they use the processor, and in
+full screen that costs Kinora pictures. To keep Kinora's own priorities, add this line to
+`S:Executive.prefs`, with tabs between its fields, and reboot:
 
 ```
 TASK		Kinora*		NOSCHEDULE
@@ -123,21 +121,22 @@ TASK		Kinora*		NOSCHEDULE
 ExecutivePrefs makes the same entry: on its Tasks page a new one of type TASK, named
 `Kinora*`, its action NOSCHEDULE and its priority left empty.
 
-Full screen with less than 32 MB for the graphics card (What it needs, above) plays less
-smoothly than in the window.
+`VCInfo` checks the video libraries and says what to fix; `VCInfo CODECS` lists what they
+decode. When the VideoCore does not answer, it sends you to the driver stack's `VCHIQInfo`.
 
-The two shell tools tell what the libraries make of a film:
+`FilmInfo` tells what the libraries make of a film:
 
 | Command | Says |
 |---|---|
-| `DMXInfo film.mkv` | what `demuxer.library` makes of the file: container, streams, chapters |
-| `ACInfo` | the audio codecs `audiocodec.library` decodes |
-| `ACInfo film.mkv` | decodes the film's audio and says what came out |
+| `FilmInfo` | the sound and video codecs that can be decoded |
+| `FilmInfo film.mkv` | the film's container, streams and chapters |
+| `FilmInfo film.mkv AUDIO` | decodes the sound and says what came out |
+| `FilmInfo film.mkv VIDEO` | decodes the video as fast as it can and says what came out and how long it took |
 
 ## Driving it from other programs
 
 Kinora's ARexx port is `KINORA`. Its commands: `PLAY`, `PAUSE`, `STOP`, `SEEK <ms>`,
-`OPEN <file>`, `ADD <file>`, `NEXT`, `PREVIOUS`, `FULLSCREEN`, `SIZE <width> <height>`,
+`OPEN <file>`, `CLOSE`, `ADD <file>`, `NEXT`, `PREVIOUS`, `FULLSCREEN`, `SIZE <width> <height>`,
 `FONT <file>`, `SUBTITLES <file>`, `STATUS`, `STATISTICS`, `TRACKS`, `AUDIO`, `SUBTITLE`,
 `UNIT`, `VOLUME`, `ASPECT`, `DELAY`, `CHAPTERS`, `PLAYLIST` and `QUIT`. Answers come in
 `RESULT`.
@@ -148,21 +147,20 @@ Docker is the only requirement; the cross compiler comes in a container.
 
 ```sh
 git submodule update --init --recursive
-./build.sh                               # the build, the video libraries first
-./build.sh --package                     # the release archive, with its Installer script
-tests/run.sh host                        # the code gates
-tests/run.sh hw --server amiga-pi4       # the tests on an Amiga (docs/architecture.md, section 13)
+./build.sh               # the build
+./build.sh --package     # the release archive, with its Installer script
 ```
 
-How Kinora is built, and why, is in [docs/architecture.md](docs/architecture.md).
+How Kinora is built and tested, and why, is in [docs/architecture.md](docs/architecture.md).
 
 ## Licences
 
-Kinora, `audiocodec.library`, `DMXInfo` and `ACInfo` are under the Mozilla Public License 2.0
-([LICENSE](LICENSE)). `demuxer.library` and `audiocodec/ffmpeg.codec` contain FFmpeg and are
-under the GNU Lesser General Public License, version 2.1 or later
-([LICENSE.LGPL-2.1](LICENSE.LGPL-2.1)). FFmpeg is built without its GPL and non-free parts,
-from the unmodified `external/ffmpeg` submodule and the changes in `patches/`.
+Kinora, `audiocodec.library` and `FilmInfo` are under the Mozilla Public
+License 2.0 ([LICENSE](LICENSE)). `demuxer.library`, `audiocodec/ffmpegaudio.codec` and
+`videocodec/ffmpegvideo.codec` contain FFmpeg and are under the GNU Lesser General Public
+License, version 2.1 or later ([LICENSE.LGPL-2.1](LICENSE.LGPL-2.1)). FFmpeg is built without
+its GPL and non-free parts, from the unmodified `external/ffmpeg` submodule and the changes in
+`patches/`, with the profiles in `profiles/`.
 
 `Kinora` contains FreeType, used under the FreeType License: portions of this software are
 copyright (c) 2026 The FreeType Project (www.freetype.org). All rights reserved. The font

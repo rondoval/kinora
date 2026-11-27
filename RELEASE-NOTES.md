@@ -1,20 +1,23 @@
 # Release notes - Kinora 0.2
 
-- **The video libraries come with Kinora now.** `videocodec.library` and its codec
-  drivers, `videocore.codec` (H.264, MJPEG and pictures on the Pi's VideoCore) and
-  `rpivid.codec` (H.265 on the HEVC block of a Pi 4 or CM4), are in this archive, with
-  `VCInfo`, which checks them. The Installer installs them with the player, or alone for
-  other programs that use them.
-- **Two optional parts come with them:** `vcjpeg.datatype`, JPEG pictures of about two
-  megapixels and more decoded on the VideoCore for every program that loads pictures
-  through datatypes, and `VCGrab`, a commodity that records the screen to a film file.
-  Each starts ticked in the Installer once it is installed.
-- **What Kinora needs from the Emu68 driver stack is `vchiq.device` alone**, the link to
-  the VideoCore (2.4.0's Install script offers it as a part of its own). The video
-  libraries the stack brought up to 2.3 are replaced by this archive's, by their version.
-- `VCInfo` checks the video side: each codec driver, a session of each opened and closed,
-  and `vcjpeg.datatype`'s place among the JPEG descriptors. When the VideoCore does not
-  answer, it sends you to the driver stack's `VCHIQInfo`.
+- **Films in the older video codecs play now:** MPEG-1, MPEG-2, MPEG-4 part 2 (Xvid, DivX),
+  DivX 3, H.263 and Theora. The new `ffmpegvideo.codec` decodes them on the 68k; when it
+  cannot keep up, Kinora skips pictures instead of falling behind.
+- **The video libraries come with Kinora now:** `videocodec.library`, `videocore.codec`
+  (H.264, MJPEG, pictures) and `rpivid.codec` (H.265), with `VCInfo` to check them. From
+  the Emu68 driver stack Kinora needs only `vchiq.device`.
+- **Two optional extras:** `vcjpeg.datatype` decodes large JPEGs on the VideoCore for every
+  program that uses datatypes, and `VCGrab` records the screen to a film file.
+- **The FFmpeg codecs are optimized for the 68k under Emu68:** sound and reading take less
+  of the processor.
+- **The sound decoder is renamed `ffmpegaudio.codec`;** the Installer removes the old
+  `ffmpeg.codec`.
+- **The statistics (key I)** name the codec drivers in use and fit smaller windows.
+- **Project > Close** empties the player and keeps the playlist (ARexx: `CLOSE`).
+- **`FilmInfo` replaces `DMXInfo` and `ACInfo`,** and can also test-decode a film's video.
+  The Installer removes the old tools.
+- **If you use Executive,** the ReadMe's `TASK Kinora* NOSCHEDULE` line covers the new
+  decoder too.
 
 
 # Release notes - Kinora 0.1
