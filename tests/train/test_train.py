@@ -3,9 +3,9 @@
 
 The suite's device fixture puts the build in its places: it must be a profile-generating one (KINORA_PGO=GENERATE),
 whose three FFmpeg binaries are instrumented. The rigs then read and decode the training material
-(tests/material/training.sh), never the tests' own, one binary at a time: VCDecode each film's video
-(ffmpegvideo.codec), DMXInfo every packet of every film (demuxer.library), ACInfo each film's sound and each sound
-clip, mixed down to stereo as well (audiocodec's ffmpegaudio.codec). The library stays in memory meanwhile, gathering
+(tests/material/training.sh), never the tests' own, one binary at a time, all through FilmInfo: each film's video
+decoded (ffmpegvideo.codec), every packet of every film read (demuxer.library), each film's sound and each sound
+clip decoded, mixed down to stereo as well (audiocodec's ffmpegaudio.codec). The library stays in memory meanwhile, gathering
 its counts, and PgoDump has it write its profile at the end of its part, which comes back to build/pgo-streams/
 for the merge: a part that fails costs that part only, `-k` runs it again.
 """
@@ -64,21 +64,21 @@ def dump(device, library: str, functions: int, configuration: str) -> None:
 @pytest.mark.timeout(TIMEOUT_S)
 def test_video(device):
     """ffmpegvideo.codec: every film's video decoded, then its profile."""
-    each_file(device, SOFTWARE_VIDEO, lambda remote: run_ok(device, "C:VCDecode", remote))
+    each_file(device, SOFTWARE_VIDEO, lambda remote: run_ok(device, "C:FilmInfo", f"{remote} VIDEO"))
     dump(device, "ffmpegvideo.codec", 16, "video")
 
 
 @pytest.mark.timeout(TIMEOUT_S)
 def test_demuxer(device):
     """demuxer.library: every packet of every film, then its profile."""
-    each_file(device, FILMS, lambda remote: run_ok(device, "C:DMXInfo", f"{remote} ALL"))
+    each_file(device, FILMS, lambda remote: run_ok(device, "C:FilmInfo", f"{remote} ALL"))
     dump(device, "demuxer.library", 9, "demuxer")
 
 
 def sound_rig(device, remote: str) -> None:
-    """ACInfo over a file's first sound stream, as it is and mixed down to stereo."""
-    run_ok(device, "C:ACInfo", remote)
-    run_ok(device, "C:ACInfo", f"{remote} CHANNELS 2")
+    """FilmInfo AUDIO over a file's first sound stream, as it is and mixed down to stereo."""
+    run_ok(device, "C:FilmInfo", f"{remote} AUDIO")
+    run_ok(device, "C:FilmInfo", f"{remote} AUDIO CHANNELS 2")
 
 
 @pytest.mark.timeout(TIMEOUT_S)

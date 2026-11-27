@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0
-"""demuxer.library through DMXInfo: every packet of three containers, the streams and chapters described, seeking,
+"""demuxer.library through FilmInfo: every packet of three containers, the streams and chapters described, seeking,
 and files that are no films."""
 import pytest
 
 from kinoratest import material as films
-from kinoratest.tools import dmxinfo
+from kinoratest.tools import film_info
 
 DMXERR_FILE, DMXERR_FORMAT, DMXERR_END = -2, -3, -5
 VCC_H264, VCC_H265 = 1, 4
@@ -17,7 +17,7 @@ GOP_MS = 2000       # the film has a key frame every two seconds
 @pytest.mark.parametrize("name", films.CONTAINERS)
 def test_every_packet_is_read(device, material, name):
     """Each stream of the file gives as many packets as ffprobe counts, and the reading ends at the file's end."""
-    info = dmxinfo(device, f"{material.ram(name)} ALL")
+    info = film_info(device, f"{material.ram(name)} ALL")
     assert info.rc == 0, info.text
     assert [info.counts[stream] for stream in sorted(info.counts)] == material.packet_counts(name)
     assert int(info.result["read"]) == DMXERR_END
@@ -31,7 +31,7 @@ def test_every_packet_is_read(device, material, name):
 def test_streams_are_described(device, material, name, container, video, audio, channels, configured):
     """The container's name, and each stream's kind, codec and shape. Matroska and MP4 keep the video's parameter
     sets apart, and they come as the stream's configuration; a transport stream has them in the stream only."""
-    info = dmxinfo(device, material.ram(name))
+    info = film_info(device, material.ram(name))
     assert container in info.head["format"]
     assert int(info.head["seekable"]) == 1
     kinds = {stream["kind"]: stream for stream in info.streams}
@@ -43,7 +43,7 @@ def test_streams_are_described(device, material, name, container, video, audio, 
 
 def test_tracks_and_chapters_are_described(device, material):
     """The film's two audio tracks with their languages and titles, its subtitle track, its three chapters."""
-    info = dmxinfo(device, material.ram(films.FILM))
+    info = film_info(device, material.ram(films.FILM))
     assert [stream["kind"] for stream in info.streams] == ["video", "audio", "audio", "subtitle"]
     assert [stream["language"] for stream in info.streams[1:]] == ["eng", "pol", "eng"]
     assert "title=Low" in info.text and "title=High" in info.text
@@ -56,7 +56,7 @@ def test_tracks_and_chapters_are_described(device, material):
 def test_seek_goes_to_the_key_frame_before(device, material, seconds):
     """After a seek the first video packet is a key frame, at or before the time asked for and within one group of
     pictures of it."""
-    info = dmxinfo(device, f"{material.ram(films.FILM)} SEEK {seconds} PACKETS 12")
+    info = film_info(device, f"{material.ram(films.FILM)} SEEK {seconds * 1000} PACKETS 12")
     assert int(info.result["seek"]) == 0
     first = next(packet for packet in info.packets if int(packet["stream"]) == 0)
     assert int(first["flags"], 16) & KEY_FRAME
@@ -65,11 +65,11 @@ def test_seek_goes_to_the_key_frame_before(device, material, seconds):
 
 def test_a_text_file_is_no_film(device, material):
     """A file that is no container is refused with DMXERR_FORMAT, and the tool fails."""
-    info = dmxinfo(device, material.ram("plain.srt"))
+    info = film_info(device, material.ram("plain.srt"))
     assert info.rc != 0 and f"open failed: {DMXERR_FORMAT}" in info.text
 
 
 def test_a_missing_file_is_refused(device):
     """A file that is not there is refused with DMXERR_FILE."""
-    info = dmxinfo(device, f"{device.ram}/no-such-film.mkv")
+    info = film_info(device, f"{device.ram}/no-such-film.mkv")
     assert info.rc != 0 and f"open failed: {DMXERR_FILE}" in info.text

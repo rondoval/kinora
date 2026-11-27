@@ -1,6 +1,6 @@
 /* host: vdec in.kpv out.md5: a video stream's packets (pkdump ... video) decoded as ffmpegvideo.codec
  * decodes them, a picture a packet; a line a picture: the MD5 of its visible luma rows, then of each
- * chroma plane's, as VCDecode MD5 prints them */
+ * chroma plane's, as FilmInfo VIDEO MD5 prints them */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

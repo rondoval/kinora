@@ -1,52 +1,18 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /*
- * DMXInfo - what demuxer.library makes of a file.
- *
- *   DMXInfo FILE/A,PACKETS/N,ALL/S,SEEK/K/N
- *
- * Prints the container, its streams and chapters.  PACKETS n lists the first
- * n packets, ALL reads the whole file and counts each stream's, SEEK seconds
- * moves there first.
+ * filminfo_file.c - FilmInfo film: the container as demuxer.library reads it, its streams and
+ * chapters, and its packets listed or counted.
  */
 #include <stdio.h>
-#include <string.h>
 #include <dos/dos.h>
-#include <dos/rdargs.h>
-#include <exec/libraries.h>
 #include <proto/exec.h>
-#include <proto/dos.h>
 #include <proto/demuxer.h>
 
-#define STREAMS_COUNTED 32       /* the streams ALL keeps a count for */
-#define MICROSECONDS_PER_MS 1000 /* VCTime is microseconds; times are printed in milliseconds */
-#define MS_PER_SECOND 1000
+#include "filminfo.h"
 
-static const char version_cookie[] __attribute__((used)) = "$VER: DMXInfo " KINORA_VERSION_TEXT " " KINORA_DATE;
-static const char template[] = "FILE/A,PACKETS/N,ALL/S,SEEK/K/N";
-
-enum
-{
-	ARG_FILE,
-	ARG_PACKETS,
-	ARG_ALL,
-	ARG_SEEK,
-	ARG_COUNT
-};
-
-struct Library *DemuxerBase;
+#define STREAMS_COUNTED 32 /* the streams ALL keeps a count for */
 
 static const char *const kind_names[] = {"?", "video", "audio", "subtitle", "other"};
-
-/**
- * milliseconds() - A time for printing.
- * @time: the time
- *
- * Return: its milliseconds, -1 for VC_TIME_UNKNOWN.
- */
-static long milliseconds(VCTime time)
-{
-	return time == VC_TIME_UNKNOWN ? -1L : (long)(time / MICROSECONDS_PER_MS);
-}
 
 /**
  * show_streams() - Print the file's streams.
@@ -126,20 +92,14 @@ static LONG read_packets(struct DMXSource *source, ULONG listed, BOOL all)
 }
 
 /**
- * show() - Open the file and print what the arguments ask for.
- * @args: the template's
+ * file_show() - Print the container, its streams and chapters, and the packets the arguments ask for.
+ * @source: the source
+ * @args:   the template's: SEEK, PACKETS, ALL
  *
- * Return: RETURN_OK, or RETURN_FAIL when the file does not open or a call fails.
+ * Return: RETURN_OK, or RETURN_FAIL when a call fails.
  */
-static int show(const LONG *args)
+int file_show(struct DMXSource *source, const LONG *args)
 {
-	LONG error = 0;
-	struct DMXSource *source = DMX_OpenTags(DMXA_FileName, (ULONG)args[ARG_FILE], DMXA_ErrorPtr, (ULONG)&error, TAG_DONE);
-	if (source == NULL)
-	{
-		printf("open failed: %ld\n", (long)error);
-		return RETURN_FAIL;
-	}
 	struct DMXInfo info = {.Size = sizeof(info)};
 	DMX_GetInfo(source, &info);
 	printf("format=%s streams=%lu chapters=%lu duration_ms=%ld size=%08lx:%08lx seekable=%d\n", info.Format,
@@ -148,45 +108,15 @@ static int show(const LONG *args)
 	show_streams(source, info.Streams);
 	show_chapters(source, info.Chapters);
 
+	LONG error = 0;
 	if (args[ARG_SEEK] != 0)
 	{
-		VCTime time = (VCTime)*(LONG *)args[ARG_SEEK] * MS_PER_SECOND * MICROSECONDS_PER_MS;
+		VCTime time = (VCTime)number_of(args, ARG_SEEK) * MICROSECONDS_PER_MS;
 		error = DMX_Seek(source, &time, DMXSEEK_Before);
 		printf("seek=%ld\n", (long)error);
 	}
-	ULONG listed = args[ARG_PACKETS] != 0 ? (ULONG)*(LONG *)args[ARG_PACKETS] : 0;
 	if (error == 0)
-		error = read_packets(source, listed, args[ARG_ALL] != 0);
+		error = read_packets(source, number_of(args, ARG_PACKETS), args[ARG_ALL] != 0);
 	printf("read=%ld\n", (long)error);
-	DMX_Close(source);
 	return error == 0 || error == DMXERR_END ? RETURN_OK : RETURN_FAIL;
-}
-
-/**
- * main() - Read the arguments, open demuxer.library and show the file.
- *
- * Return: RETURN_OK, or RETURN_FAIL for arguments that make no sense, no library or a file that fails.
- */
-int main(void)
-{
-	LONG args[ARG_COUNT] = {0};
-	struct RDArgs *parsed = ReadArgs((CONST_STRPTR)template, args, NULL);
-	if (parsed == NULL)
-	{
-		PrintFault(IoErr(), (CONST_STRPTR)"DMXInfo");
-		return RETURN_FAIL;
-	}
-	int result = RETURN_FAIL;
-	DemuxerBase = OpenLibrary((CONST_STRPTR)"demuxer.library", 0);
-	if (DemuxerBase != NULL)
-	{
-		result = show(args);
-		CloseLibrary(DemuxerBase);
-	}
-	else
-	{
-		printf("demuxer.library did not open\n");
-	}
-	FreeArgs(parsed);
-	return result;
 }

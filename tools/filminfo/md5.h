@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /*
- * md5.h - MD5 (RFC 1321), for VCDecode's digest of each picture.
+ * md5.h - MD5 (RFC 1321), for FilmInfo's digest of each picture.
  */
 #ifndef KINORA_TOOLS_MD5_H
 #define KINORA_TOOLS_MD5_H

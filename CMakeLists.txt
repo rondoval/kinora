@@ -97,7 +97,7 @@ endforeach()
 #   LIBS/        demuxer.library, audiocodec.library, audiocodec/ffmpegaudio.codec,
 #                videocodec/ffmpegvideo.codec, and the video libraries: videocodec.library,
 #                videocodec/videocore.codec, videocodec/rpivid.codec
-#   C/           DMXInfo, ACInfo, VCDecode, VCInfo
+#   C/           FilmInfo, VCInfo
 #   Classes/, Storage/   vcjpeg.datatype and its descriptor VCJPEG
 #   Tools/       Commodities/VCGrab and its icon
 #   Developer/   the public headers, the video libraries' test rigs and examples
@@ -131,7 +131,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/Install.in" "${CMAKE_BINAR
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/ReadMe.in" "${CMAKE_BINARY_DIR}/installer/ReadMe" @ONLY)
 
 add_custom_target(package
-    DEPENDS Kinora demuxer_library audiocodec_library ffmpegaudio_codec ffmpegvideo_codec DMXInfo ACInfo VCDecode
+    DEPENDS Kinora demuxer_library audiocodec_library ffmpegaudio_codec ffmpegvideo_codec FilmInfo
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${PACKAGE_TREE}" "${PACKAGE_STAGE}" "${PACKAGE_ARCHIVE}"
     # what install() places, in a tree of its own: the build's install prefix is left alone
     COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${PACKAGE_TREE}"
