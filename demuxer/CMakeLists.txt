@@ -11,6 +11,7 @@ add_executable(demuxer_library
     src/demuxer_lib.c
     src/demuxer_source.c
     src/demuxer_codecs.c
+    src/demuxer_order.c
     src/demuxer_reader.c
 )
 target_compile_options(demuxer_library PRIVATE ${KINORA_COMPILE_OPTIONS})

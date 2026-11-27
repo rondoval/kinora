@@ -42,6 +42,7 @@ int main(int argc, char **argv)
         kpk_put(out, (uint32_t)par->sample_rate);
         kpk_put(out, (uint32_t)par->ch_layout.nb_channels);
         kpk_put(out, (uint32_t)par->block_align);
+        kpk_put(out, (uint32_t)par->bits_per_coded_sample);
     }
     kpk_put(out, (uint32_t)par->extradata_size);
     fwrite(par->extradata, 1, (size_t)par->extradata_size, out);

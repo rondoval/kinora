@@ -47,7 +47,8 @@
 #define KEY_STEP (10 * (VCTime)MICROSECONDS_PER_SECOND) /* the cursor keys move by this much */
 
 /* What the file requesters show at first; their pattern gadget shows others */
-#define FILM_PATTERN "#?.(mkv|webm|mp4|m4v|mov|ts|m2ts|mts)" /* demuxer.library's containers: Matroska, MP4/QuickTime, MPEG-TS */
+/* demuxer.library's containers: Matroska, MP4/QuickTime, MPEG-TS, AVI, MPEG-PS, and MPEG-1/2 video alone */
+#define FILM_PATTERN "#?.(mkv|webm|mp4|m4v|mov|ts|m2ts|mts|avi|divx|mpg|mpeg|vob|m1v|m2v)"
 #define SUBTITLE_PATTERN "#?.srt"                             /* SubRip */
 #define FONT_PATTERN "#?.(ttf|otf)"                           /* what FreeType reads */
 

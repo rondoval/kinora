@@ -55,18 +55,23 @@ static const char *const skip_names[] = {
 };
 
 static const char *const audio_codec_names[] = {
-    [ACC_AAC]      = "AAC",
-    [ACC_AAC_LATM] = "AAC (LATM)",
-    [ACC_AC3]      = "AC-3",
-    [ACC_EAC3]     = "E-AC-3",
-    [ACC_DTS]      = "DTS",
-    [ACC_MP3]      = "MP3",
-    [ACC_MP2]      = "MP2",
-    [ACC_Opus]     = "Opus",
-    [ACC_Vorbis]   = "Vorbis",
-    [ACC_FLAC]     = "FLAC",
-    [ACC_TrueHD]   = "TrueHD",
-    [ACC_PCM]      = "PCM",
+    [ACC_AAC]       = "AAC",
+    [ACC_AAC_LATM]  = "AAC (LATM)",
+    [ACC_AC3]       = "AC-3",
+    [ACC_EAC3]      = "E-AC-3",
+    [ACC_DTS]       = "DTS",
+    [ACC_MP3]       = "MP3",
+    [ACC_MP2]       = "MP2",
+    [ACC_Opus]      = "Opus",
+    [ACC_Vorbis]    = "Vorbis",
+    [ACC_FLAC]      = "FLAC",
+    [ACC_TrueHD]    = "TrueHD",
+    [ACC_PCM]       = "PCM",
+    [ACC_ADPCM_IMA] = "IMA ADPCM",
+    [ACC_ADPCM_MS]  = "MS ADPCM",
+    [ACC_ALaw]      = "A-law",
+    [ACC_MuLaw]     = "mu-law",
+    [ACC_PCM_DVD]   = "DVD LPCM",
 };
 
 static void text_add(struct text *text, const char *format, ...) __attribute__((format(printf, 2, 3)));
@@ -246,6 +251,21 @@ static void line_video(struct engine *engine, struct text *text)
 }
 
 /**
+ * sound_shape() - The sound's rate and channels: as the stream says, else as the decoder last gave them.
+ * @engine:   the engine
+ * @rate:     gets the samples a second, 0 before any were decoded where the stream does not say
+ * @channels: gets the channels
+ *
+ * A DVD's LPCM says them in its packets only.
+ */
+static void sound_shape(const struct engine *engine, ULONG *rate, ULONG *channels)
+{
+	const struct DMXStream *stream = &engine->audio_stream;
+	*rate = stream->SampleRate != 0 ? stream->SampleRate : engine->pending_samples.SampleRate;
+	*channels = stream->Channels != 0 ? stream->Channels : engine->pending_samples.Channels;
+}
+
+/**
  * line_audio() - The audio stream and where its sound goes.
  * @engine: the engine
  * @text:   the text
@@ -261,10 +281,13 @@ static void line_audio(struct engine *engine, struct text *text)
 		text_add(text, "Audio: none\n");
 		return;
 	}
+	ULONG rate;
+	ULONG channels;
+	sound_shape(engine, &rate, &channels);
 	text_add(text, "Audio: %s %lu Hz, %lu channels, to AHI unit %lu as %s in %u bits%s\n",
 	         name_of(audio_codec_names, ARRAY_COUNT(audio_codec_names), stream->Codec),
-	         (unsigned long)stream->SampleRate,
-	         (unsigned long)stream->Channels,
+	         (unsigned long)rate,
+	         (unsigned long)channels,
 	         (unsigned long)engine->setup.audio_unit,
 	         engine->audio_surround ? "7.1" : "stereo",
 	         engine->audio_32bit ? 32u : 16u,
@@ -333,8 +356,11 @@ static void line_bit_rate(struct engine *engine, struct text *text)
 static void line_ahead(struct engine *engine, struct text *text)
 {
 	unsigned long ring = 0;
-	if (engine->audio_out != NULL && engine->audio_stream.SampleRate != 0)
-		ring = (unsigned long)((unsigned long long)audio_out_queued(engine->audio_out) * KILO / engine->audio_stream.SampleRate);
+	ULONG rate;
+	ULONG channels;
+	sound_shape(engine, &rate, &channels);
+	if (engine->audio_out != NULL && rate != 0)
+		ring = (unsigned long)((unsigned long long)audio_out_queued(engine->audio_out) * KILO / rate);
 	ObtainSemaphore(&engine->queue_lock); /* the reader adds to the queues meanwhile */
 	VCTime video = queue_duration(&engine->video_queue);
 	VCTime audio = queue_duration(&engine->audio_queue);

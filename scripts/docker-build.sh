@@ -15,7 +15,11 @@
 #
 # Environment overrides:
 #   KINORA_BUILD_IMAGE     Toolchain image tag
-#   KINORA_CONFIGURE_ARGS  Extra args appended to the configure step
+#   KINORA_CONFIGURE_ARGS  Extra args appended to the configure step.  Kinora's modes
+#                          (KINORA_PGO, KINORA_TRACE) last one build: each configure
+#                          puts them back to USE and OFF before these args, which
+#                          override them, so CMake's cache keeps no profile-generating
+#                          or tracing build for the next one
 #   KINORA_BUILD_STAMP     A local build's mark in every $VER (build.sh sets it); empty
 #                          for a release.  Kinora takes it as KINORA_BUILD_STAMP,
 #                          emu68-common and the video libraries as EMU68_BUILD_STAMP
@@ -97,6 +101,7 @@ cmake -S . -B "$BD" \
 	-DKINORA_BUILD_STAMP="${KINORA_BUILD_STAMP:-}" \
 	-DKINORA_VIDEOCODEC_SOURCE_DIR="/work/${KINORA_VIDEOCODEC_SOURCE_DIR:-external/videocodec-library}" \
 	-DKINORA_RPIVID_SOURCE_DIR="/work/${KINORA_RPIVID_SOURCE_DIR:-external/rpivid-codec}" \
+	-DKINORA_PGO=USE -DKINORA_TRACE=OFF \
 	${KINORA_CONFIGURE_ARGS:-}
 
 cmake --build "$BD" -j"$(nproc)" "$@"

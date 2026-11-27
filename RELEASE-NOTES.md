@@ -3,6 +3,11 @@
 - **Films in the older video codecs play now:** MPEG-1, MPEG-2, MPEG-4 part 2 (Xvid, DivX),
   DivX 3, H.263 and Theora. The new `ffmpegvideo.codec` decodes them on the 68k; when it
   cannot keep up, Kinora skips pictures instead of falling behind.
+- **AVI and MPEG programme streams play:** Xvid, DivX and DivX 3 in `.avi` and `.divx`,
+  VCD and DVD files (`.mpg`, `.vob`), with their sound in ADPCM, A-law, µ-law or a DVD's
+  LPCM too. A DVD's menus do not: play its `.vob` files one by one.
+- **B-pictures come in their order** where a file times them as they are decoded (AVI, Xvid
+  in Matroska), and a move in a DVD file starts at a whole picture.
 - **The video libraries come with Kinora now:** `videocodec.library`, `videocore.codec`
   (H.264, MJPEG, pictures) and `rpivid.codec` (H.265), with `VCInfo` to check them. From
   the Emu68 driver stack Kinora needs only `vchiq.device`.

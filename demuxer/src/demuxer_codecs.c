@@ -46,6 +46,11 @@ static const struct codec_name codec_names[] = {
     {AV_CODEC_ID_VORBIS, ACC_Vorbis},
     {AV_CODEC_ID_FLAC, ACC_FLAC},
     {AV_CODEC_ID_TRUEHD, ACC_TrueHD},
+    {AV_CODEC_ID_ADPCM_IMA_WAV, ACC_ADPCM_IMA},
+    {AV_CODEC_ID_ADPCM_MS, ACC_ADPCM_MS},
+    {AV_CODEC_ID_PCM_ALAW, ACC_ALaw},
+    {AV_CODEC_ID_PCM_MULAW, ACC_MuLaw},
+    {AV_CODEC_ID_PCM_DVD, ACC_PCM_DVD},
     {AV_CODEC_ID_SUBRIP, DMXS_Text},
     {AV_CODEC_ID_TEXT, DMXS_Text},
     {AV_CODEC_ID_ASS, DMXS_ASS},
@@ -175,8 +180,9 @@ ULONG codec_color_space(const AVCodecParameters *parameters)
  * H.264 and H.265 held as length-prefixed NAL units (an avcC or hvcC record) become an
  * Annex-B byte stream.  MPEG-4 Part 2 has its packed B-pictures (DivX's and Xvid's way in
  * AVI and in Matroska's VfW mode: a P- and a B-picture in one packet, a placeholder in the
- * next) put each in a packet of its own, so that every packet is one picture at its time; a
- * stream without them passes as it is.
+ * next) put each in a packet of its own, so that every packet is one picture, the B-picture
+ * with the placeholder's time (demuxer_order.c puts the pair's times in order); a stream
+ * without them passes as it is.
  *
  * Return: its name; NULL for a stream that needs none.
  */

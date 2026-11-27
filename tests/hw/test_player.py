@@ -108,10 +108,11 @@ def test_plays_a_film_to_its_end(player, material):
     assert end.shown >= films.SHORT_MS * films.FRAME_RATE // 1000 - 3 and end.dropped <= 2
 
 
-@pytest.mark.parametrize("clip", ["xvid.mkv", "mpeg2.ts"])
+@pytest.mark.parametrize("clip", ["xvid.mkv", "mpeg2.ts", "xvid.avi", "mpeg2.vob"])
 def test_plays_a_film_the_68k_decodes(player, material, clip):
-    """Six seconds of MPEG-4 Part 2 and of interlaced MPEG-2, decoded by ffmpegvideo.codec and converted by the
-    VideoCore into the window: every picture shown, the film ended, nothing failed; the statistics name both."""
+    """Six seconds of MPEG-4 Part 2 and of interlaced MPEG-2, in Matroska, a transport stream, AVI and a VOB, decoded
+    by ffmpegvideo.codec and converted by the VideoCore into the window: every picture shown, the film ended, nothing
+    failed; the statistics name both."""
     pictures = len(material.path(clip + ".host.md5").read_text().split())
     player.start(material.ram(clip))
     end = player.wait_for(lambda s: s.state == "ENDED", 30, "the film's end")
@@ -119,6 +120,15 @@ def test_plays_a_film_the_68k_decodes(player, material, clip):
     assert end.shown >= pictures - 3 and end.dropped <= 2
     codecs = statistics(player)["Codecs"]
     assert codecs.startswith("video ffmpegvideo.codec, converted by videocore.codec"), codecs
+
+
+@pytest.mark.parametrize("name", ["d.avi", "e.vob"])
+def test_plays_avi_and_a_dvd_with_sound(player, material, name):
+    """Four seconds of Xvid with MP3 in AVI and of MPEG-2 with AC-3 in a VOB, sound and picture: the film ended,
+    its pictures shown, nothing failed."""
+    player.start(material.ram(name))
+    end = player.wait_for(lambda s: s.state == "ENDED", 20, "the film's end")
+    assert end.error == 0 and end.shown >= 90 and end.dropped <= 2, end
 
 
 def test_keeps_time(player, material):

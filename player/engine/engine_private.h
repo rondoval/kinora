@@ -242,6 +242,7 @@ struct engine
 	struct audio_placement placement;  /* 7.1: where AHI's channels are in the pending samples, for the layout last seen */
 	BOOL audio_end_sent;               /* the decoder was told the stream's end */
 	BOOL audio_done;                   /* and gave its last samples */
+	BOOL sound_waits;                  /* since the open or a move the sound waits for the first picture's time (audio_feed()) */
 
 	/* The subtitles */
 	struct subtitles *subtitles;            /* the cues of the stream or file chosen */

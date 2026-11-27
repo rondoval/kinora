@@ -56,13 +56,14 @@ one at 1080p, and full screen then plays less smoothly than the window.
 
 | | Supported |
 |---|---|
-| Containers | Matroska and WebM (`.mkv`, `.webm`); MP4 and QuickTime (`.mp4`, `.m4v`, `.mov`); MPEG transport streams (`.ts`, `.m2ts`) |
+| Containers | Matroska and WebM (`.mkv`, `.webm`); MP4 and QuickTime (`.mp4`, `.m4v`, `.mov`); MPEG transport streams (`.ts`, `.m2ts`); MPEG programme streams, as VCDs and DVDs hold them (`.mpg`, `.mpeg`, `.vob`); AVI (`.avi`, `.divx`); MPEG-1 and MPEG-2 video alone (`.m1v`, `.m2v`) |
 | Video | H.264; H.265 (HEVC) on a Pi 4 or CM4; on the 68k: MPEG-1, MPEG-2, MPEG-4 part 2 (Xvid, DivX), DivX 3, H.263, Theora |
-| Audio | AAC (LC, HE, HE v2, also as LATM in transport streams); AC-3; E-AC-3; DTS; Dolby TrueHD; MP3; MP2; Opus; Vorbis; FLAC; PCM (8, 16, 24 and 32 bit, 32-bit float) |
+| Audio | AAC (LC, HE, HE v2, also as LATM in transport streams); AC-3; E-AC-3; DTS; Dolby TrueHD; MP3; MP2; Opus; Vorbis; FLAC; PCM (8, 16, 24 and 32 bit, 32-bit float); a DVD's LPCM; IMA and Microsoft ADPCM; A-law and µ-law |
 | Subtitles | SubRip, ASS/SSA and MP4 timed text inside the film; a SubRip file (`.srt`) beside it or opened by hand |
 
 Not played: other video codecs (VP8, VP9, AV1, VC-1), picture subtitles (Blu-ray PGS, DVD
-VobSub, DVB), and anything over the network.
+VobSub, DVB), a DVD's menus (its `.vob` files play one at a time), and anything over the
+network. H.264 with B-pictures in AVI, which is rare, comes out of order.
 
 The codecs the 68k decodes take much of the processor: films of DVD size keep up, larger ones
 may not. Then Kinora skips pictures and the sound goes on. Interlaced video (from television

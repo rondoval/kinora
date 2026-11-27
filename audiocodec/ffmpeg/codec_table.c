@@ -36,6 +36,11 @@ static const struct codec_row codec_rows[] = {
     {ACC_FLAC, AV_CODEC_ID_FLAC, "FLAC", NULL},
     {ACC_TrueHD, AV_CODEC_ID_TRUEHD, "TrueHD", NULL},
     {ACC_PCM, AV_CODEC_ID_NONE, "PCM", NULL},
+    {ACC_ADPCM_IMA, AV_CODEC_ID_ADPCM_IMA_WAV, "IMA ADPCM", NULL},
+    {ACC_ADPCM_MS, AV_CODEC_ID_ADPCM_MS, "MS ADPCM", NULL},
+    {ACC_ALaw, AV_CODEC_ID_PCM_ALAW, "A-law", NULL},
+    {ACC_MuLaw, AV_CODEC_ID_PCM_MULAW, "mu-law", NULL},
+    {ACC_PCM_DVD, AV_CODEC_ID_PCM_DVD, "DVD LPCM", NULL},
 };
 
 /* An uncompressed layout and FFmpeg's decoder for it */

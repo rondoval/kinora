@@ -32,6 +32,7 @@ static LONG params_read(struct AudioCodecBase *base, struct TagItem *tags, struc
 	    .OutputChannels = GetTagData(ACA_OutputChannels, 0, tags),
 	    .ExtradataSize = GetTagData(ACA_ExtradataSize, 0, tags),
 	    .Extradata = (CONST_APTR)GetTagData(ACA_Extradata, 0, tags),
+	    .BlockAlign = GetTagData(ACA_BlockAlign, 0, tags),
 	};
 	BOOL format_known = params->OutputFormat == ACF_S16 || params->OutputFormat == ACF_S32;
 	BOOL extradata_whole = (params->Extradata != NULL) == (params->ExtradataSize != 0);

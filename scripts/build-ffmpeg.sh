@@ -51,14 +51,15 @@ COPY="$BUILD/source"
 case "$CONFIGURATION" in
 demuxer)
 	PARTS="--disable-swresample
-		--enable-demuxer=matroska,mov,mpegts
+		--enable-demuxer=matroska,mov,mpegts,avi,mpegps,mpegvideo,m4v
 		--enable-parser=h264,hevc,aac,aac_latm,ac3,mpegaudio,dca,opus,vorbis,flac,mpegvideo,mpeg4video
 		--enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,mpeg4_unpack_bframes"
 	;;
 audio)
 	PARTS="--disable-avformat --enable-swresample
 		--enable-decoder=aac,aac_latm,ac3_fixed,eac3,dca,mp3,mp2,opus,vorbis,flac,truehd
-		--enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_u8,pcm_f32le,pcm_f32be"
+		--enable-decoder=pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_u8,pcm_f32le,pcm_f32be
+		--enable-decoder=pcm_dvd,pcm_alaw,pcm_mulaw,adpcm_ima_wav,adpcm_ms"
 	;;
 video)
 	PARTS="--disable-avformat --disable-swresample

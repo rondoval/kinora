@@ -128,6 +128,7 @@ static struct ACSession *session_open(const struct DMXStream *stream, const LONG
 	    {ACA_PcmFlags, stream->PcmFlags},
 	    {ACA_OutputFormat, format},
 	    {ACA_OutputChannels, number_of(args, ARG_CHANNELS)},
+	    {ACA_BlockAlign, stream->BlockAlign},
 	    {args[ARG_BACKEND] != 0 ? ACA_Backend : TAG_IGNORE, (ULONG)args[ARG_BACKEND]},
 	    {ACA_ErrorPtr, (ULONG)error},
 	    {ACA_BackendName, (ULONG)backend},

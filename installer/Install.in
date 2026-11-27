@@ -159,7 +159,7 @@
 
 ; Bit layout of the selection mask:
 ;   0 Kinora (the player)   1 the video libraries   2 vcjpeg.datatype
-;   3 VCGrab                4 DMXInfo and ACInfo
+;   3 VCGrab                4 FilmInfo
 ; The video libraries are videocodec.library, its codec drivers and VCInfo;
 ; the player, vcjpeg.datatype and VCGrab work through them, so each brings them
 ; along.  vcjpeg.datatype and VCGrab are optional: each starts ticked once it is
@@ -179,15 +179,17 @@
                     "on the Pi's VideoCore for every program that\n"
                     "uses them: videocodec.library, its codec\n"
                     "drivers (H.264 and pictures, and H.265 on a\n"
-                    "Pi 4 or CM4) and VCInfo, which checks them.\n"
+                    "Pi 4 or CM4; MPEG-1, MPEG-2, MPEG-4, DivX 3,\n"
+                    "H.263 and Theora on the 68k) and VCInfo,\n"
+                    "which checks them.\n"
                     "Kinora needs them; they can be installed\n"
                     "without it.\n\n"
                     "vcjpeg.datatype decodes JPEG pictures of\n"
                     "about 2 megapixels and more on the VideoCore\n"
                     "for every program that loads pictures through\n"
                     "datatypes.  VCGrab records the screen to a\n"
-                    "film file.  DMXInfo and ACInfo say what a\n"
-                    "film holds.\n\n"
+                    "film file.  FilmInfo says what a film holds\n"
+                    "and how its sound and picture decode.\n\n"
                     @askoptions-help
                 )
             )
@@ -196,7 +198,7 @@
                 "video libraries (videocodec.library, VCInfo)"
                 "vcjpeg.datatype (JPEG pictures)"
                 "VCGrab          (screen recorder)"
-                "DMXInfo, ACInfo (shell tools)"
+                "FilmInfo        (shell tool)"
             )
             (default #features-default)
         )
@@ -263,7 +265,9 @@
         (P_copyver (tackon #archive "LIBS/demuxer.library") "LIBS:" "demuxer.library")
         (P_copyver (tackon #archive "LIBS/audiocodec.library") "LIBS:" "audiocodec.library")
         (if (NOT (exists "LIBS:audiocodec" (noreq))) (makedir "LIBS:audiocodec"))
-        (P_copyver (tackon #archive "LIBS/audiocodec/ffmpeg.codec") "LIBS:audiocodec" "ffmpeg.codec")
+        (P_copyver (tackon #archive "LIBS/audiocodec/ffmpegaudio.codec") "LIBS:audiocodec" "ffmpegaudio.codec")
+        ; its name until Kinora 0.2: audiocodec.library would load the old one beside it, and take it on a tie
+        (if (exists "LIBS:audiocodec/ffmpeg.codec" (noreq)) (delete "LIBS:audiocodec/ffmpeg.codec" (optional "force")))
     )
 )
 
@@ -272,13 +276,15 @@
 ; The video libraries: videocodec.library, its codec drivers in LIBS:videocodec/
 ; (videocore.codec on the VideoCore; rpivid.codec on the HEVC block of a Pi 4
 ; or CM4, copied on every machine: a Pi 3 has none, and there an H.265 video
-; does not open, nothing else changes) and VCInfo, kept in step with them.
+; does not open, nothing else changes; ffmpegvideo.codec, Kinora's own, on the
+; 68k) and VCInfo, kept in step with them.
 (if #install-video
     (
         (P_copyver (tackon #archive "LIBS/videocodec.library") "LIBS:" "videocodec.library")
         (if (NOT (exists "LIBS:videocodec" (noreq))) (makedir "LIBS:videocodec"))
         (P_copyver (tackon #archive "LIBS/videocodec/videocore.codec") "LIBS:videocodec" "videocore.codec")
         (P_copyver (tackon #archive "LIBS/videocodec/rpivid.codec") "LIBS:videocodec" "rpivid.codec")
+        (P_copyver (tackon #archive "LIBS/videocodec/ffmpegvideo.codec") "LIBS:videocodec" "ffmpegvideo.codec")
         (P_copyver (tackon #archive "C/VCInfo") "C:" "VCInfo")
     )
 )
@@ -338,13 +344,19 @@
 (complete 90)
 
 (if #install-tools
-    (copyfiles
-        (prompt "Copying DMXInfo and ACInfo to C:...")
-        (help @copyfiles-help)
-        (source (tackon #archive "C"))
-        (dest "C:")
-        (choices "DMXInfo" "ACInfo")
-        (optional "force")
+    (
+        (copyfiles
+            (prompt "Copying FilmInfo to C:...")
+            (help @copyfiles-help)
+            (source (tackon #archive "C"))
+            (dest "C:")
+            (choices "FilmInfo")
+            (optional "force")
+        )
+        ; the tools FilmInfo took over: DMXInfo and ACInfo until 0.1, VCDecode in test builds of 0.2
+        (if (exists "C:DMXInfo" (noreq)) (delete "C:DMXInfo" (optional "force")))
+        (if (exists "C:ACInfo" (noreq)) (delete "C:ACInfo" (optional "force")))
+        (if (exists "C:VCDecode" (noreq)) (delete "C:VCDecode" (optional "force")))
     )
 )
 

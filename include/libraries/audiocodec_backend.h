@@ -35,7 +35,7 @@
 
 /* The ABI version a backend reports: major << 16 | minor.  The frontend keeps a backend only if the major is its own. */
 #define ACB_ABI_VERSION_MAJOR 1
-#define ACB_ABI_VERSION_MINOR 0
+#define ACB_ABI_VERSION_MINOR 1 /* 1: ACSessionParams.BlockAlign */
 #define ACB_ABI_VERSION ((ACB_ABI_VERSION_MAJOR << 16) | ACB_ABI_VERSION_MINOR)
 #define ACB_ABI_MAJOR(version) ((version) >> 16)
 
@@ -64,6 +64,7 @@ struct ACSessionParams
 	ULONG OutputChannels; /* mix down to this many; 0: as the stream */
 	ULONG ExtradataSize;  /* bytes at Extradata */
 	CONST_APTR Extradata; /* the codec's configuration; valid in ACB_OpenSession() only */
+	ULONG BlockAlign;     /* the bytes of one coded block, 0 when the container did not say (ABI 1.1) */
 };
 
 #endif /* LIBRARIES_AUDIOCODEC_BACKEND_H */

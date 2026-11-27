@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """ffmpegvideo.codec through videocodec.library and FilmInfo: its rows, each codec's pictures bit for bit as the host's
-decode of the same FFmpeg source gives them, the choice of backend, skipping, a move, the chain to RGB, and the share of
-the CPU each codec takes."""
+decode of the same FFmpeg source gives them, in Matroska, transport and programme streams and AVI, each at its time, the
+choice of backend, skipping, a move, the chain to RGB, and the share of the CPU each codec takes."""
 import pytest
 
 from kinoratest import material as films
@@ -37,7 +37,7 @@ def test_rows_are_listed(device):
     assert all(row["backend"] != BACKEND for row in rows if int(row["codec"]) == VCC_H264)
 
 
-@pytest.mark.parametrize("clip", films.VIDEO)
+@pytest.mark.parametrize("clip", films.VIDEO + films.IN_CONTAINERS)
 def test_decodes_as_the_host_does(device, material, clip):
     """Six seconds of each codec give the pictures the same decoder gives on the host, bit for bit, in order."""
     decode = video_decode(device, f"{material.ram(clip)} MD5")
@@ -46,6 +46,18 @@ def test_decodes_as_the_host_does(device, material, clip):
     assert [md5 for _, md5 in decode.pictures] == host_digests(material, clip)
     info = decode.infos[0]
     assert int(info["format"]) == VCF_I420 and int(info["width"]) % 64 == 0 and int(info["height"]) % 16 == 0
+
+
+@pytest.mark.parametrize("clip", films.VIDEO + films.IN_CONTAINERS)
+def test_pictures_come_at_their_times(device, material, clip):
+    """Each picture comes at the time it is shown, one picture's time after the one before: B-pictures given their times
+    in decode order (AVI's frame numbers, libxvid's in Matroska, DivX's packed pairs) put in order by demuxer.library.
+    libxvid leaves one longer gap after the first picture, its encoder's delay as the file holds it."""
+    times = [pts for pts, _ in video_decode(device, f"{material.ram(clip)} MD5").pictures]
+    steps = [later - earlier for earlier, later in zip(times, times[1:])]
+    assert times and min(times) >= 0, f"pictures without a time: {times[:8]}"
+    assert all(step > 0 and step % FRAME_MS == 0 for step in steps), f"steps {sorted(set(steps))}, first times {times[:8]}"
+    assert sum(step != FRAME_MS for step in steps) <= 1, f"steps {sorted(set(steps))}"
 
 
 def test_h264_stays_on_the_videocore(device, material):
@@ -70,7 +82,7 @@ def test_skips_when_asked(device, material, skip, most):
     assert 0 < decode.num("pictures") <= whole * most
 
 
-@pytest.mark.parametrize("clip", ["mpeg2.ts", "mpeg4.mkv"])
+@pytest.mark.parametrize("clip", ["mpeg2.ts", "mpeg4.mkv", "xvid.avi", "mpeg2.vob"])
 def test_a_move_goes_on_from_its_key_frame(device, material, clip):
     """A flush and a move to three seconds, after two seconds decoded: the pictures after it come in their order, from
     a key frame near the time asked for, to the end, each as the same decode without a move gives it; none from

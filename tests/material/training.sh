@@ -56,6 +56,20 @@ film h263.mkv "crop=950:534,scale=352:288" -t 20 -c:v h263 -b:v 800k -g 250 -an
 film flv1.mkv "$SD" -t 20 -c:v flv -b:v 1200k -g 250 -an
 film theora.mkv "$SD" -c:v libtheora -b:v 1200k -g 250 -map 1:a -c:a libvorbis -ac 2
 
+# the same in AVI and in programme streams: times in decode order, DivX 5's packed B-pictures
+# (tests/material/avi_pack.py), a VCD's MPEG-1 and a DVD's MPEG-2 with its sound in AC-3 and LPCM
+film xvid.avi "$SD" $XVID -flags +mv4+aic -map 1:a -c:a libmp3lame -b:a 192k
+film divx3.avi "$SD" -c:v msmpeg4 -b:v 1200k -g 250 -vtag DIV3 -map 1:a -c:a ac3 -ac 2 -b:a 192k
+[ -s divx5_packed.avi ] || {
+	film divx5_unpacked.avi "$SD" -c:v mpeg4 -b:v 1500k -bf 1 -g 250 -flags +mv4 -vtag DX50 -an
+	python3 "$ROOT/tests/material/avi_pack.py" divx5_unpacked.avi divx5_packed.avi
+	rm divx5_unpacked.avi
+}
+film mpeg1.mpg "crop=950:534,scale=352:288" -c:v mpeg1video -b:v 1150k -bf 2 -g 15 -map 1:a -c:a mp2 -ac 2 -b:a 224k
+film dvd.vob "$PAL" -c:v mpeg2video -b:v 6M -maxrate 9M -bufsize 1835k -g 12 -bf 2 \
+	-flags +ilme+ildct -top 1 -alternate_scan 1 -aspect 16:9 -map 1:a -map 1:a -c:a:0 ac3 -ac:a:0 6 -b:a:0 448k \
+	-c:a:1 pcm_dvd -ac:a:1 2
+
 # the demuxer's containers as films come: H.264 and H.265 with sound and subtitles
 printf '1\n00:00:01,000 --> 00:00:05,000\nTraining\n\n2\n00:00:10,000 --> 00:00:15,000\nMore training\n' > training.srt
 [ -f h264.mkv ] || $FF -i source.mkv -i sound.wav -i training.srt -map 0:v -map 1:a -map 1:a -map 2 \
@@ -67,23 +81,28 @@ printf '1\n00:00:01,000 --> 00:00:05,000\nTraining\n\n2\n00:00:10,000 --> 00:00:
 
 # the audio decoders (audiocodec's ffmpegaudio.codec): each codec Kinora plays, from the 5.1 mix.
 # FFmpeg encodes no HE-AAC, so its SBR stays untrained (laid out as cold)
-clip() # <name> <layout> <encoder options...>
+clip() # <file> <layout> <encoder options...>
 {
 	local name=$1 layout=$2
 	shift 2
-	[ -s "$name.mkv" ] || $FF -i sound.wav -af "aformat=channel_layouts=$layout" "$@" "$name.mkv"
+	[ -s "$name" ] || $FF -i sound.wav -af "aformat=channel_layouts=$layout" "$@" "$name"
 }
-clip aac_st stereo -c:a aac -b:a 160k
-clip aac_51 5.1 -c:a aac -b:a 384k
-clip ac3_51 5.1 -c:a ac3 -b:a 448k
-clip eac3_51 5.1 -c:a eac3 -b:a 384k
-clip dts_51 5.1 -c:a dca -strict -2 -b:a 1509k
-clip mp3_st stereo -c:a libmp3lame -b:a 192k
-clip mp2_st stereo -c:a mp2 -b:a 224k
-clip opus_51 5.1 -c:a libopus -b:a 256k
-clip vorbis_st stereo -c:a libvorbis
-clip flac_51 5.1 -c:a flac
-clip truehd_51 5.1 -c:a truehd -strict -2
-clip pcm_st stereo -c:a pcm_s16le
+clip aac_st.mkv stereo -c:a aac -b:a 160k
+clip aac_51.mkv 5.1 -c:a aac -b:a 384k
+clip ac3_51.mkv 5.1 -c:a ac3 -b:a 448k
+clip eac3_51.mkv 5.1 -c:a eac3 -b:a 384k
+clip dts_51.mkv 5.1 -c:a dca -strict -2 -b:a 1509k
+clip mp3_st.mkv stereo -c:a libmp3lame -b:a 192k
+clip mp2_st.mkv stereo -c:a mp2 -b:a 224k
+clip opus_51.mkv 5.1 -c:a libopus -b:a 256k
+clip vorbis_st.mkv stereo -c:a libvorbis
+clip flac_51.mkv 5.1 -c:a flac
+clip truehd_51.mkv 5.1 -c:a truehd -strict -2
+clip pcm_st.mkv stereo -c:a pcm_s16le
+clip ima_st.avi stereo -c:a adpcm_ima_wav
+clip msadpcm_st.avi stereo -c:a adpcm_ms
+clip alaw_st.avi stereo -c:a pcm_alaw
+clip mulaw_st.avi stereo -c:a pcm_mulaw
+clip lpcm_51.vob 5.1 -c:a pcm_dvd
 
 ls -la "$OUT" | grep -v source

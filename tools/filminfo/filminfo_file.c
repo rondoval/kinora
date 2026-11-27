@@ -35,8 +35,9 @@ static void show_streams(struct DMXSource *source, ULONG count)
 			       (long)stream.Par.Num, (long)stream.Par.Den, (long)stream.FrameRate.Num, (long)stream.FrameRate.Den,
 			       (unsigned long)stream.ColorSpace);
 		if (stream.Kind == DMXK_Audio)
-			printf(" rate=%lu channels=%lu bits=%lu pcm=%lx", (unsigned long)stream.SampleRate, (unsigned long)stream.Channels,
-			       (unsigned long)stream.Bits, (unsigned long)stream.PcmFlags);
+			printf(" rate=%lu channels=%lu bits=%lu pcm=%lx align=%lu", (unsigned long)stream.SampleRate,
+			       (unsigned long)stream.Channels, (unsigned long)stream.Bits, (unsigned long)stream.PcmFlags,
+			       (unsigned long)stream.BlockAlign);
 		printf(" title=%s\n", stream.Title);
 	}
 }

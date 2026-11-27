@@ -18,11 +18,14 @@ ROOT = TESTS.parent
 MATERIAL = ROOT / "build" / "training-material"
 STREAMS = ROOT / "build" / "pgo-streams"
 SOFTWARE_VIDEO = ("xvid.mkv", "xvid_qpel.mkv", "xvid_hd.mkv", "mpeg4.mp4", "divx3.mkv", "msmpeg4v2.mkv",
-                  "mpeg2_576i.ts", "mpeg2_1080i.ts", "mpeg1.mkv", "h263.mkv", "flv1.mkv", "theora.mkv")
+                  "mpeg2_576i.ts", "mpeg2_1080i.ts", "mpeg1.mkv", "h263.mkv", "flv1.mkv", "theora.mkv",
+                  "xvid.avi", "divx3.avi", "divx5_packed.avi", "mpeg1.mpg", "dvd.vob")
 FILMS = SOFTWARE_VIDEO + ("h264.mkv", "h265.mp4", "h264.ts")
-WITH_SOUND = ("xvid.mkv", "mpeg4.mp4", "mpeg2_576i.ts", "mpeg2_1080i.ts", "theora.mkv", "h264.mkv", "h265.mp4", "h264.ts")
+WITH_SOUND = ("xvid.mkv", "mpeg4.mp4", "mpeg2_576i.ts", "mpeg2_1080i.ts", "theora.mkv", "h264.mkv", "h265.mp4", "h264.ts",
+              "xvid.avi", "divx3.avi", "mpeg1.mpg", "dvd.vob")
 SOUND = tuple(clip + ".mkv" for clip in ("aac_st", "aac_51", "ac3_51", "eac3_51", "dts_51", "mp3_st", "mp2_st",
-                                         "opus_51", "vorbis_st", "flac_51", "truehd_51", "pcm_st"))
+                                         "opus_51", "vorbis_st", "flac_51", "truehd_51", "pcm_st")) + \
+    ("ima_st.avi", "msadpcm_st.avi", "alaw_st.avi", "mulaw_st.avi", "lpcm_51.vob")
 TIMEOUT_S = 3 * 60 * 60  # a part is one test: every file, its rig
 
 

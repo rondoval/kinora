@@ -8,10 +8,15 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-CONTAINERS = ("a.mkv", "b.mp4", "c.ts")     # H.264+AAC+SubRip in Matroska, H.265+AC-3 in MP4, H.264+E-AC-3 in a transport stream
-AUDIO = ("aac_st", "aac_51", "ac3_51", "eac3_51", "dts_51", "mp3_st", "opus_51", "flac_st", "vorbis_st")
+# H.264+AAC+SubRip in Matroska, H.265+AC-3 in MP4, H.264+E-AC-3 in a transport stream, Xvid+MP3 in AVI, MPEG-2+AC-3 in a VOB
+CONTAINERS = ("a.mkv", "b.mp4", "c.ts", "d.avi", "e.vob")
+# twenty seconds of each audio codec, with the host's decode beside each (<clip>.host.raw)
+AUDIO = ("aac_st.mkv", "aac_51.mkv", "ac3_51.mkv", "eac3_51.mkv", "dts_51.mkv", "mp3_st.mkv", "opus_51.mkv", "flac_st.mkv",
+         "vorbis_st.mkv", "ima_st.avi", "msadpcm_st.avi", "alaw_st.avi", "mulaw_st.avi", "lpcm_st.vob")
 # six seconds of each codec ffmpegvideo.codec decodes, with the host's decode beside each (<clip>.host.md5)
 VIDEO = ("mpeg1.mkv", "mpeg2.ts", "mpeg4.mkv", "xvid.mkv", "divx3.mkv", "msmpeg4v2.mkv", "h263.mkv", "flv1.mkv", "theora.mkv")
+# and in the other containers they come in: AVI's times in decode order, packed B-pictures, programme streams
+IN_CONTAINERS = ("xvid.avi", "divx_packed.avi", "divx3.avi", "mpeg1.mpg", "mpeg2.vob")
 FILM = "film.mkv"           # 720p25, 40 s, two audio tracks, a SubRip track, three chapters
 PLAIN = "plain.mkv"         # the same picture, one audio track; plain.srt lies beside it
 SHORT = "short.mkv"         # six seconds, for the playlist

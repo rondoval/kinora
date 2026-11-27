@@ -9,6 +9,14 @@
  * NAL units go through FFmpeg's bitstream filter to an Annex-B byte stream,
  * their configuration with them, and MPEG-4 Part 2 streams through the one
  * that unpacks packed B-pictures (codec_filter()).
+ *
+ * Every video packet leaves with the time its picture is shown.  A packet the
+ * file gives none has it from the stream's next reference picture, as MPEG's
+ * timing has it (FFmpeg's AVFMT_FLAG_GENPTS), in every container but AVI,
+ * whose times are frame numbers in decode order; MPEG video's pictures whose
+ * times come in decode order are put in the order they are shown
+ * (demuxer_order.c).  So an MPEG video stream's packets come out a few at a
+ * time, each run when the next reference picture is read.
  */
 #include <string.h>
 #include <proto/dos.h>
@@ -60,16 +68,20 @@ static int64_t io_seek(void *opaque, int64_t offset, int whence)
 /* ---- opening and closing ---------------------------------------------------------- */
 
 /**
- * filters_free() - Free the streams' bitstream filters.
+ * filters_free() - Free the streams' bitstream filters and orders.
  * @source: the source
  */
 static void filters_free(struct DMXSource *source)
 {
-	if (source->filters == NULL)
-		return;
 	for (unsigned int i = 0; i < source->format->nb_streams; i++)
-		av_bsf_free(&source->filters[i]);
+	{
+		if (source->filters != NULL)
+			av_bsf_free(&source->filters[i]);
+		if (source->orders != NULL)
+			order_free(&source->orders[i]);
+	}
 	av_freep(&source->filters);
+	av_freep(&source->orders);
 }
 
 /**
@@ -92,7 +104,7 @@ static AVBSFContext *filter_make(const AVStream *stream, const char *name)
 }
 
 /**
- * filters_make() - Give every stream that needs one its filter (codec_filter()).
+ * filters_make() - Give every stream that needs one its filter (codec_filter()) and its order (order_needed()).
  * @source: the source, its streams known
  *
  * Return: 0, or DMXERR_NOMEM.
@@ -101,16 +113,16 @@ static LONG filters_make(struct DMXSource *source)
 {
 	unsigned int count = source->format->nb_streams;
 	source->filters = av_calloc(count ? count : 1, sizeof(*source->filters));
-	if (source->filters == NULL)
+	source->orders = av_calloc(count ? count : 1, sizeof(*source->orders));
+	if (source->filters == NULL || source->orders == NULL)
 		return DMXERR_NOMEM;
 	for (unsigned int i = 0; i < count; i++)
 	{
 		const AVStream *stream = source->format->streams[i];
 		const char *name = codec_filter(stream->codecpar);
-		if (name == NULL)
-			continue;
-		source->filters[i] = filter_make(stream, name);
-		if (source->filters[i] == NULL)
+		if (name != NULL && (source->filters[i] = filter_make(stream, name)) == NULL)
+			return DMXERR_NOMEM;
+		if (order_needed(stream->codecpar) && (source->orders[i] = order_make(stream->codecpar)) == NULL)
 			return DMXERR_NOMEM;
 	}
 	return 0;
@@ -156,6 +168,8 @@ static LONG format_open(struct DMXSource *source)
 		return DMXERR_FORMAT;
 	if (avformat_find_stream_info(source->format, NULL) < 0)
 		return DMXERR_FORMAT;
+	if (strcmp(source->format->iformat->name, "avi") != 0)
+		source->format->flags |= AVFMT_FLAG_GENPTS; /* AVI's times are frame numbers: demuxer_order.c reads them */
 	return filters_make(source);
 }
 
@@ -319,6 +333,7 @@ LONG source_stream(struct DMXSource *source, ULONG index, struct DMXStream *stre
 	    .Channels = (ULONG)parameters->ch_layout.nb_channels,
 	    .Bits = (ULONG)parameters->bits_per_coded_sample,
 	    .PcmFlags = codec_pcm_flags(parameters->codec_id),
+	    .BlockAlign = (ULONG)parameters->block_align,
 	};
 	text_copy(answer.Language, sizeof(answer.Language), from->metadata, "language");
 	text_copy(answer.Title, sizeof(answer.Title), from->metadata, "title");
@@ -355,7 +370,8 @@ LONG source_chapter(struct DMXSource *source, ULONG index, struct DMXChapter *ch
  * @source: the source
  * @mask:   a bit a stream, bit 0 the first
  *
- * FFmpeg is told too, so that it does not keep what nobody reads.
+ * FFmpeg is told too, so that it does not keep what nobody reads, and what
+ * a stream no longer wanted holds in its order is dropped.
  *
  * Return: 0.
  */
@@ -366,6 +382,8 @@ LONG source_select(struct DMXSource *source, ULONG mask)
 	{
 		BOOL wanted = i < SOURCE_STREAMS_MAX && (mask & (1UL << i)) != 0;
 		source->format->streams[i]->discard = wanted ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
+		if (!wanted && source->orders != NULL && source->orders[i] != NULL)
+			order_flush(source->orders[i]);
 	}
 	return 0;
 }
@@ -400,6 +418,69 @@ static LONG packet_next(struct DMXSource *source, AVPacket *packet)
 }
 
 /**
+ * orders_take() - A packet whose time is settled, from any stream's order.
+ * @source: the source
+ *
+ * Return: the packet, the caller's; NULL for none.
+ */
+static AVPacket *orders_take(struct DMXSource *source)
+{
+	for (unsigned int i = 0; i < source->format->nb_streams; i++)
+	{
+		AVPacket *packet = source->orders[i] != NULL ? order_take(source->orders[i]) : NULL;
+		if (packet != NULL)
+			return packet;
+	}
+	return NULL;
+}
+
+/**
+ * orders_end() - The file has ended: every stream's last run is settled.
+ * @source: the source
+ */
+static void orders_end(struct DMXSource *source)
+{
+	for (unsigned int i = 0; i < source->format->nb_streams; i++)
+		if (source->orders[i] != NULL)
+			order_end(source->orders[i]);
+	source->ended = TRUE;
+}
+
+/**
+ * packet_ordered() - The next packet to give: one whose time an order settled, else the file's next, through its stream's order.
+ * @source: the source
+ * @packet: gets the packet, the caller's
+ *
+ * Return: 0, DMXERR_END once the orders have given everything, DMXERR_FILE or DMXERR_NOMEM.
+ */
+static LONG packet_ordered(struct DMXSource *source, AVPacket **packet)
+{
+	for (;;)
+	{
+		*packet = orders_take(source);
+		if (*packet != NULL)
+			return 0;
+		if (source->ended)
+			return DMXERR_END;
+		AVPacket *read = av_packet_alloc();
+		LONG error = read != NULL ? packet_next(source, read) : DMXERR_NOMEM;
+		if (error != 0)
+			av_packet_free(&read);
+		if (error == DMXERR_END)
+			orders_end(source);
+		else if (error != 0)
+			return error;
+		else if (source->orders[read->stream_index] != NULL)
+			order_put(source->orders[read->stream_index], read);
+		else
+		{
+			*packet = read;
+			return 0;
+		}
+	}
+}
+
+/**
  * source_read() - Give the caller the next packet.
  * @source: the source
  * @packet: the caller's structure, its Size set
@@ -408,15 +489,10 @@ static LONG packet_next(struct DMXSource *source, AVPacket *packet)
  */
 LONG source_read(struct DMXSource *source, struct DMXPacket *packet)
 {
-	AVPacket *read = av_packet_alloc();
-	if (read == NULL)
-		return DMXERR_NOMEM;
-	LONG error = packet_next(source, read);
+	AVPacket *read = NULL;
+	LONG error = packet_ordered(source, &read);
 	if (error != 0)
-	{
-		av_packet_free(&read);
 		return error;
-	}
 	AVRational base = source->format->streams[read->stream_index]->time_base;
 	struct DMXPacket answer = {
 	    .Data = read->data,
@@ -451,8 +527,8 @@ void source_release(struct DMXPacket *packet)
  * @time:   the time
  * @flags:  DMXSEEK_*
  *
- * The streams' filters start afresh.  The next packet's time says where the
- * source went.
+ * The streams' filters start afresh, and their orders drop what they held.
+ * The next packet's time says where the source went.
  *
  * Return: 0, or DMXERR_SEEK when the file or its handler cannot go there.
  */
@@ -461,7 +537,12 @@ LONG source_seek(struct DMXSource *source, VCTime time, ULONG flags)
 	if (av_seek_frame(source->format, -1, time, flags == DMXSEEK_After ? 0 : AVSEEK_FLAG_BACKWARD) < 0)
 		return DMXERR_SEEK;
 	for (unsigned int i = 0; i < source->format->nb_streams; i++)
+	{
 		if (source->filters[i] != NULL)
 			av_bsf_flush(source->filters[i]);
+		if (source->orders[i] != NULL)
+			order_flush(source->orders[i]);
+	}
+	source->ended = FALSE;
 	return 0;
 }
