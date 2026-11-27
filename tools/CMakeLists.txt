@@ -15,3 +15,18 @@ target_include_directories(ACInfo PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_BI
 add_dependencies(ACInfo demuxer_sfd_headers audiocodec_sfd_headers)
 target_link_options(ACInfo PRIVATE -s)
 install(TARGETS ACInfo RUNTIME DESTINATION C)
+
+# VCDecode: what videocodec.library makes of a file's video: its pictures, their digests, the time
+add_executable(VCDecode VCDecode.c md5.c)
+target_compile_options(VCDecode PRIVATE ${KINORA_COMPILE_OPTIONS})
+target_include_directories(VCDecode PRIVATE ${CMAKE_SOURCE_DIR}/include ${CMAKE_BINARY_DIR}/generated/include)
+add_dependencies(VCDecode demuxer_sfd_headers)
+target_link_options(VCDecode PRIVATE -s)
+install(TARGETS VCDecode RUNTIME DESTINATION C)
+
+# PgoDump: a profile-generating library's profile written (KINORA_PGO GENERATE only; not installed)
+if(KINORA_FFMPEG_PGO STREQUAL "GENERATE")
+    add_executable(PgoDump PgoDump.c)
+    target_compile_options(PgoDump PRIVATE ${KINORA_COMPILE_OPTIONS})
+    target_link_options(PgoDump PRIVATE -s)
+endif()

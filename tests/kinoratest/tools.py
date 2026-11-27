@@ -80,3 +80,44 @@ def codec_table(device) -> list[dict[str, str]]:
     _, text = device.run_text("C:ACInfo", "", 60)
     return [{"codec": re.match(r"codec (\d+):", line).group(1), **pairs(line)} for line in text.splitlines()
             if line.startswith("codec ")]
+
+
+@dataclass
+class VideoDecode:
+    """What VCDecode printed about a decode."""
+
+    rc: int
+    text: str
+    facts: dict[str, str] = field(default_factory=dict)              # stream, codec, tag, open, backend, packets, pictures, us, decode, ...
+    infos: list[dict[str, str]] = field(default_factory=list)        # each stream info: width, height, crop, format, colorspace, rate, par
+    pictures: list[tuple[int, str]] = field(default_factory=list)    # MD5: (pts_ms, md5) a picture, in order
+    moved_at: int = -1                                               # SEEK: how many pictures came before the move
+
+    def num(self, name: str) -> int:
+        """The fact @name as a number."""
+        return int(self.facts[name])
+
+
+def vcdecode(device, args: str, timeout: float = 300) -> VideoDecode:
+    """VCDecode @args, read."""
+    rc, text = device.run_text("C:VCDecode", args, timeout)
+    decode = VideoDecode(rc, text)
+    for line in text.splitlines():
+        if line.startswith("info "):
+            decode.infos.append(pairs(line))
+        elif line.startswith("picture "):
+            facts = pairs(line)
+            decode.pictures.append((int(facts["pts_ms"]), facts["md5"]))
+        elif line.startswith("moved="):
+            decode.facts.update(pairs(line))
+            decode.moved_at = len(decode.pictures)
+        else:
+            decode.facts.update(pairs(line))
+    return decode
+
+
+def decoder_rows(device) -> list[dict[str, str]]:
+    """VCDecode without a file: every backend's decoder rows."""
+    _, text = device.run_text("C:VCDecode", "", 60)
+    return [{"codec": re.match(r"codec (\d+):", line).group(1), **pairs(line)} for line in text.splitlines()
+            if line.startswith("codec ")]

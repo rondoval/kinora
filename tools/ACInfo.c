@@ -180,13 +180,15 @@ static int decode_stream(struct DMXSource *source, const LONG *args)
 	DMX_SelectStreams(source, 1UL << number);
 
 	LONG error = 0;
+	char backend[AC_BACKEND_NAME_SIZE] = "";
 	ULONG format = args[ARG_BITS] != 0 && *(LONG *)args[ARG_BITS] == BITS_LONG ? ACF_S32 : ACF_S16;
 	struct ACSession *session =
 	    AC_OpenSessionTags(ACA_Codec, stream.Codec, ACA_Extradata, (ULONG)stream.Extradata, ACA_ExtradataSize, stream.ExtradataSize,
 	                       ACA_SampleRate, stream.SampleRate, ACA_Channels, stream.Channels, ACA_Bits, stream.Bits, ACA_PcmFlags,
 	                       stream.PcmFlags, ACA_OutputFormat, format, ACA_OutputChannels,
-	                       args[ARG_CHANNELS] != 0 ? (ULONG) * (LONG *)args[ARG_CHANNELS] : 0, ACA_ErrorPtr, (ULONG)&error, TAG_DONE);
-	printf("stream=%ld codec=%lu open=%ld\n", (long)number, (unsigned long)stream.Codec, (long)error);
+	                       args[ARG_CHANNELS] != 0 ? (ULONG) * (LONG *)args[ARG_CHANNELS] : 0, ACA_ErrorPtr, (ULONG)&error, ACA_BackendName,
+	                       (ULONG)backend, TAG_DONE);
+	printf("stream=%ld codec=%lu open=%ld backend=%s\n", (long)number, (unsigned long)stream.Codec, (long)error, backend);
 	if (session == NULL)
 		return RETURN_FAIL;
 

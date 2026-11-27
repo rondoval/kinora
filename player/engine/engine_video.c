@@ -21,6 +21,12 @@
 #define INPUT_PACKETS 8u  /* the decoder's input packets asked for: fewer than FREE_PACKETS */
 #define ITEMS_A_PASS 64u  /* VC_Poll() items taken in one pass, so a busy decoder cannot keep the engine from its commands */
 
+/* Skipping while the decoder falls behind (architecture 6.3), in microseconds of clock_wall() */
+#define SKIP_STEP_GAP 2000000      /* a step up at most this often */
+#define SKIP_HOLD_FIRST 10000000   /* this long without a dropped picture takes a step back */
+#define SKIP_HOLD_MOST 160000000   /* the longest that wait grows to */
+#define SKIP_RELAPSE 5000000       /* drops this soon after a step back double the wait */
+
 /**
  * ready_release() - Give every waiting picture back to the decoder unshown.
  * @engine: the engine
@@ -33,6 +39,63 @@ static void ready_release(struct engine *engine)
 		engine->ready_head = (engine->ready_head + 1) % READY_FRAMES;
 		engine->ready_count--;
 	}
+}
+
+/**
+ * skip_set() - Tell the decoder what it may leave out (VCA_Skip); the hardware decoders ignore it.
+ * @engine: the engine, its decoder open
+ */
+static void skip_set(struct engine *engine)
+{
+	VC_SetAttrsTags(engine->video_decoder, VCA_Skip, engine->skip.level, TAG_DONE);
+}
+
+/**
+ * skip_reset() - Start a film decoding every picture.
+ * @engine: the engine
+ */
+static void skip_reset(struct engine *engine)
+{
+	engine->skip = (struct video_skip){.level = VCSK_None, .changed = clock_wall(), .hold = SKIP_HOLD_FIRST};
+}
+
+/**
+ * skip_more() - A picture was dropped: ask the decoder to leave more out, a step at most every SKIP_STEP_GAP.
+ * @engine: the engine
+ *
+ * A step up soon after a step back doubles the wait before the next one, so that a film the
+ * machine cannot play whole settles at the level it can.
+ */
+static void skip_more(struct engine *engine)
+{
+	struct video_skip *skip = &engine->skip;
+	VCTime now = clock_wall();
+	skip->last_drop = now;
+	if (skip->level >= VCSK_NonKey || now - skip->changed < SKIP_STEP_GAP)
+		return;
+	if (skip->lowered != 0 && now - skip->lowered < SKIP_RELAPSE)
+		skip->hold = skip->hold * 2 < SKIP_HOLD_MOST ? skip->hold * 2 : SKIP_HOLD_MOST;
+	skip->level++;
+	skip->changed = now;
+	skip->lowered = 0;
+	skip_set(engine);
+}
+
+/**
+ * skip_less() - After its wait without a dropped picture, ask the decoder to leave less out.
+ * @engine: the engine, its decoder open
+ */
+static void skip_less(struct engine *engine)
+{
+	struct video_skip *skip = &engine->skip;
+	VCTime now = clock_wall();
+	VCTime since = skip->changed > skip->last_drop ? skip->changed : skip->last_drop;
+	if (skip->level == VCSK_None || now - since < skip->hold)
+		return;
+	skip->level--;
+	skip->changed = now;
+	skip->lowered = now;
+	skip_set(engine);
 }
 
 /**
