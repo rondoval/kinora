@@ -30,7 +30,7 @@
 #define AUDIOCODEC_BACKEND_BASE_NAME ACBackendBase
 #include <proto/audiocodec_backend.h>
 
-#define AC_FALLBACK_BACKEND "ffmpeg.codec" /* opened by name when the drawer cannot be read (a Task caller) */
+#define AC_FALLBACK_BACKEND "ffmpegaudio.codec" /* opened by name when the drawer cannot be read (a Task caller) */
 #define AC_SESSION_MAGIC 0x41435345u       /* 'ACSE': marks a live struct ACSession */
 
 /* One backend in the list: its library, kept open, and its codec table, read once */

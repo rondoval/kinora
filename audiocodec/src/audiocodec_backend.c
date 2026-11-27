@@ -37,7 +37,7 @@ static BOOL is_backend_name(const char *name)
 
 /**
  * name_matches() - Whether a name a program gave means a backend.
- * @backend: the backend's file name ("ffmpeg.codec")
+ * @backend: the backend's file name ("ffmpegaudio.codec")
  * @name:    the name asked for, with or without ".codec", in any case
  *
  * Return: TRUE if it does.

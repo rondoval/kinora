@@ -37,6 +37,16 @@ set(KINORA_VIDEOCODEC_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/videocode
 set(KINORA_RPIVID_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/rpivid-codec" CACHE PATH
     "rpivid-codec's sources, for the licence and notices the package takes from them")
 
+# The profile-guided FFmpeg (docs/architecture.md, section 3): USE lays FFmpeg out by the
+# profiles in profiles/ (each configuration without them is built as OFF); GENERATE builds the
+# instrumented libraries and PgoDump for a training round (scripts/pgo-train.py). The profiles
+# are made for the default target (68040 with its FPU); another target builds without them.
+set(KINORA_PGO "USE" CACHE STRING "Profile-guided FFmpeg: OFF, GENERATE or USE")
+set_property(CACHE KINORA_PGO PROPERTY STRINGS OFF GENERATE USE)
+if(NOT KINORA_PGO MATCHES "^(OFF|GENERATE|USE)$")
+    message(FATAL_ERROR "KINORA_PGO is OFF, GENERATE or USE, not ${KINORA_PGO}")
+endif()
+
 # Our own code is gnu23 (enum types with a fixed underlying type). FFmpeg builds by its
 # own rules in ffmpeg/.
 set(CMAKE_C_STANDARD 23)
@@ -61,6 +71,7 @@ add_subdirectory(freetype)
 link_libraries(VideoCodec::headers)
 add_subdirectory(demuxer)
 add_subdirectory(audiocodec)
+add_subdirectory(videocodec-ffmpeg)
 add_subdirectory(player)
 add_subdirectory(tools)
 
@@ -83,9 +94,10 @@ endforeach()
 #
 #   Install, Install.info, ReadMe, ReadMe.info
 #   Kinora/      the program, its icon, Fonts/
-#   LIBS/        demuxer.library, audiocodec.library, audiocodec/ffmpeg.codec, and the video
-#                libraries: videocodec.library, videocodec/videocore.codec, videocodec/rpivid.codec
-#   C/           DMXInfo, ACInfo, VCInfo
+#   LIBS/        demuxer.library, audiocodec.library, audiocodec/ffmpegaudio.codec,
+#                videocodec/ffmpegvideo.codec, and the video libraries: videocodec.library,
+#                videocodec/videocore.codec, videocodec/rpivid.codec
+#   C/           DMXInfo, ACInfo, VCDecode, VCInfo
 #   Classes/, Storage/   vcjpeg.datatype and its descriptor VCJPEG
 #   Tools/       Commodities/VCGrab and its icon
 #   Developer/   the public headers, the video libraries' test rigs and examples
@@ -119,7 +131,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/Install.in" "${CMAKE_BINAR
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/ReadMe.in" "${CMAKE_BINARY_DIR}/installer/ReadMe" @ONLY)
 
 add_custom_target(package
-    DEPENDS Kinora demuxer_library audiocodec_library ffmpeg_codec DMXInfo ACInfo
+    DEPENDS Kinora demuxer_library audiocodec_library ffmpegaudio_codec ffmpegvideo_codec DMXInfo ACInfo VCDecode
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${PACKAGE_TREE}" "${PACKAGE_STAGE}" "${PACKAGE_ARCHIVE}"
     # what install() places, in a tree of its own: the build's install prefix is left alone
     COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${PACKAGE_TREE}"
@@ -147,9 +159,11 @@ add_custom_target(package
     COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_VIDEOCODEC_SOURCE_DIR}/tools/vcgrab/mkv/LICENSE" "${PACKAGE_STAGE}/Licenses/mkv-writer"
     COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_RPIVID_SOURCE_DIR}/LICENSE" "${PACKAGE_STAGE}/Licenses/rpivid-codec"
     COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_RPIVID_SOURCE_DIR}/NOTICE" "${PACKAGE_STAGE}/Licenses/rpivid-codec.NOTICE"
-    # what the two LGPL libraries' FFmpeg was built from: the change to its source and the script that builds it
+    # what the three LGPL binaries' FFmpeg was built from: the changes to its source, the script that builds it
+    # and the headers it forces in
     COMMAND ${CMAKE_COMMAND} -E copy ${KINORA_FFMPEG_PATCHES} "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-ffmpeg.sh"
-            "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/amiga_shim.h" "${PACKAGE_STAGE}/Licenses/ffmpeg/"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/amiga_shim.h" "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/branchless_clip.h"
+            "${PACKAGE_STAGE}/Licenses/ffmpeg/"
     # the archive holds the drawer, so that it unpacks into one
     COMMAND sh -c "cd '${PACKAGE_DIR}' && '${LHA_EXECUTABLE}' a '${PACKAGE_ARCHIVE}' '${PACKAGE_NAME}'"
     COMMAND ${CMAKE_COMMAND} -E echo "package: ${PACKAGE_ARCHIVE}"
