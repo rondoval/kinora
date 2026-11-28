@@ -125,6 +125,11 @@ if [ "$PGO" = USE ]; then
 	done
 fi
 
+# gcc checks each profile against the source file's name as compiled. A fresh configure
+# links src to the copy and compiles src/<file>; one that finds that link compiles
+# ./src/<file>, so every profile mismatches once make rebuilds. Every configure is fresh.
+rm -f src
+
 # shellcheck disable=SC2086
 "$COPY/configure" \
 	--enable-cross-compile --cross-prefix=m68k-amigaos- --arch=m68k --target-os=none \
