@@ -54,7 +54,7 @@ struct display
 	VCTime cool_until; /* the E-clock time from which it is not */
 
 	/* the flipper, the process that scrolls the viewport, and what it and the engine share */
-	struct Process *flipper;      /* the process, NULL to scroll in the engine's task */
+	struct Process *flipper;      /* the process; every screen in use has one */
 	struct Task *task;            /* the engine's task, which it tells */
 	ULONG signal;                 /* the signal bits it tells the engine with: a flip done, the flipper gone */
 	volatile LONG flip_to;        /* the part the flipper is to show, NO_PART when it has */

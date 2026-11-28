@@ -1,0 +1,42 @@
+name: Build
+
+# Every PR and push to main: Kinora with the video libraries it builds from its
+# submodules (external/videocodec-library, external/rpivid-codec), as
+# scripts/docker-build.sh builds them, packaged as the release archive would be; then
+# the code gates of Kinora and of the two libraries. The archive is kept as an
+# artifact, never published (release.yml publishes, from a tag).
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build and package (in the toolchain container)
+        run: ./scripts/docker-build.sh --target package
+
+      - name: Code gates (Kinora, videocodec-library, rpivid-codec)
+        run: |
+          set -euo pipefail
+          tests/run.sh host
+          external/videocodec-library/tests/run.sh host -m gates
+          external/rpivid-codec/tests/run.sh gates
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: kinora-package
+          path: build/package/Kinora-*.lha
+          if-no-files-found: error

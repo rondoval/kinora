@@ -47,6 +47,7 @@ struct display; /* a place in use; display.c's own */
 struct display *display_open(const struct display_place *place, struct Task *task, ULONG signal);
 void display_close(struct display *display);
 ULONG display_choose_format(const struct display *display, ULONG codec);
+BOOL display_mode_usable(ULONG mode);
 BOOL display_attach(struct display *display, struct VCSession *session, ULONG codec, const struct VCStreamInfo *stream,
                     const struct VCRational *aspect);
 void display_detach(struct display *display);

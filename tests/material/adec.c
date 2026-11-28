@@ -44,13 +44,15 @@ int main(int argc, char **argv)
     if (kpk_get(&cursor) != KPK_MAGIC) return 20;
     enum AVCodecID id = kpk_get(&cursor);
     int rate = (int)kpk_get(&cursor), channels = (int)kpk_get(&cursor), align = (int)kpk_get(&cursor);
-    int extra = (int)kpk_get(&cursor);
+    int bits = (int)kpk_get(&cursor), extra = (int)kpk_get(&cursor);
     const AVCodec *codec = avcodec_find_decoder(id);
     if (!codec) { printf("no decoder for %d\n", id); return 10; }
     AVCodecContext *ctx = avcodec_alloc_context3(codec);
     ctx->sample_rate = rate;
     ctx->block_align = align;
-    av_channel_layout_default(&ctx->ch_layout, channels);
+    ctx->bits_per_coded_sample = bits; /* as ffmpegaudio.codec gets it (ACA_Bits): IMA ADPCM refuses to open without */
+    if (channels > 0)
+        av_channel_layout_default(&ctx->ch_layout, channels);
     ctx->extradata = av_mallocz((size_t)extra + AV_INPUT_BUFFER_PADDING_SIZE);
     memcpy(ctx->extradata, cursor, (size_t)extra);
     ctx->extradata_size = extra;

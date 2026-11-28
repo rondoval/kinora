@@ -14,13 +14,17 @@ paths; the source files say the rest. What a user sees is in the [README](../REA
 - **Machines:** the Pi 4 and the CM4, where everything is tested; the Pi 3 with H.264 only,
   untested for want of one. Machines without `videocodec.library` are out of scope for good.
 - **Files:** local ones, and those on the network through smb2fs. Matroska and WebM, MP4 and
-  QuickTime, MPEG transport streams.
+  QuickTime, MPEG transport and programme streams (VCD and DVD files), AVI.
 - **Video:** H.264 and H.265, decoded by the Pi's hardware. What the hardware does not decode
   is refused with a plain message, not shown wrongly: 10-bit H.264, H.264 above 1080p, and
   10-bit H.265 above 1080p. 10-bit H.265 up to 1080p plays, without tone mapping, so HDR
-  material looks washed out.
+  material looks washed out. MPEG-1, MPEG-2, MPEG-4 Part 2 (Xvid, DivX), MS-MPEG4 (DivX 3),
+  H.263 and Theora are decoded by FFmpeg on the 68k (section 14), up to 1920×1088; standard
+  definition keeps up, larger pictures as far as the CPU allows. Interlaced pictures are
+  shown as they are, combed.
 - **Sound:** AAC (LC, HE, HE v2, also LATM), AC-3, E-AC-3, DTS, MP3, MP2, Opus, Vorbis, FLAC,
-  TrueHD and PCM, decoded by FFmpeg on the 68k and played through AHI in stereo or 7.1.
+  TrueHD, PCM, a DVD's LPCM, IMA and Microsoft ADPCM, A-law and µ-law, decoded by FFmpeg on the
+  68k and played through AHI in stereo or 7.1.
 - **Subtitles:** text, from the film's streams (SubRip, ASS events, MP4 timed text) or from a
   SubRip file.
 - **YouTube** is out of scope for good: its pages and signatures change too often to follow.
@@ -37,11 +41,12 @@ flowchart TD
     engine -- "file" --> demuxer["demuxer.library<br/>FFmpeg libavformat<br/>(LGPL)"]
     demuxer -- "packets" --> engine
     engine -- "audio packets" --> audiocodec["audiocodec.library<br/>(MPL-2.0)"]
-    audiocodec --> ffcodec["LIBS:audiocodec/ffmpeg.codec<br/>FFmpeg audio decoders<br/>(LGPL)"]
+    audiocodec --> ffcodec["LIBS:audiocodec/ffmpegaudio.codec<br/>FFmpeg audio decoders<br/>(LGPL)"]
     audiocodec -- "PCM" --> engine
     engine -- "video packets" --> videocodec["videocodec.library"]
     videocodec --> videocore["videocore.codec<br/>H.264"]
     videocodec --> rpivid["rpivid.codec<br/>H.265"]
+    videocodec --> ffvideo["LIBS:videocodec/ffmpegvideo.codec<br/>FFmpeg video decoders<br/>(LGPL)"]
     videocodec -- "pictures" --> display
     audio --> ahi["AHI"]
 ```
@@ -51,9 +56,10 @@ flowchart TD
 | `Kinora` | Engine, GUI, subtitle parsing and drawing | MPL-2.0 |
 | `LIBS:demuxer.library` | Reads container files; our API over FFmpeg's libavformat | LGPL-2.1-or-later |
 | `LIBS:audiocodec.library` | Audio decode sessions; finds backends in a drawer | MPL-2.0 |
-| `LIBS:audiocodec/ffmpeg.codec` | The audio decoders of FFmpeg's libavcodec | LGPL-2.1-or-later |
+| `LIBS:audiocodec/ffmpegaudio.codec` | The audio decoders of FFmpeg's libavcodec | LGPL-2.1-or-later |
+| `LIBS:videocodec/ffmpegvideo.codec` | The video decoders of FFmpeg's libavcodec, a backend of `videocodec.library` | LGPL-2.1-or-later |
 
-**One `ffmpeg.codec`, not one per codec.** A backend lists a row per codec, so a program
+**One `ffmpegaudio.codec`, not one per codec.** A backend lists a row per codec, so a program
 already picks codecs one by one. Splitting the binary would buy nothing in licence (all rows
 are LGPL) and would cost size: the decoders share most of what they are made of (bit readers,
 the transforms, the float routines, libavutil, the C library), 360 KB or more that every
@@ -62,8 +68,8 @@ codec would come as its own backend beside this one; nothing in the API changes.
 
 Rules that hold the parts apart:
 
-- The demuxer and the audio decoders never share a binary. Each of the two FFmpeg binaries is
-  built from the same pinned source with its own configuration.
+- The demuxer, the audio decoders and the video decoders never share a binary. Each of the
+  three FFmpeg binaries is built from the same pinned source with its own configuration.
 - No FFmpeg type, constant or structure appears in a public header. An FFmpeg update changes
   nothing for a caller.
 - The demuxer hands out packets; it decodes nothing. The player passes video packets to
@@ -125,9 +131,10 @@ What the build needs:
   options the build never runs one, so naming the cross compiler satisfies it;
 - `--disable-everything`, no threads, no assembly (`--disable-asm --disable-inline-asm`), no
   network, `--target-os=none`;
-- two patches: static alignment capped at 4 bytes, which is all Amiga hunk objects give; and an
+- three patches: static alignment capped at 4 bytes, which is all Amiga hunk objects give; an
   option of the AC-3 and E-AC-3 decoders, `normalize_downmix` (on by default, as upstream), that
-  leaves a mix down at its sources' levels (section 5);
+  leaves a mix down at its sources' levels (section 5); and IDCTs laid out for Emu68
+  (`libavcodec/m68k/`, section 14);
 - gcc's incompatible-pointer error turned back into a warning (`int32_t` is `long` here);
 - prototypes for `mkstemp` and `usleep`, and our own three `__atomic_*_4` helpers.
 
@@ -149,20 +156,74 @@ What shapes the libraries:
   the file calls, `clock()`) would be a day or two of work, a whole C library of our own one
   to two weeks and again in part at every FFmpeg update, for no saving in size: libnix and its
   maths are 50 KB of each binary.
+- **But not libnix's memory copies.** Its `memcpy()` calls Exec's `CopyMem()` through the
+  library vector for every copy. Every library that carries FFmpeg links emu68-common's
+  `memcpy`, `memmove` and `memset` instead, as objects ahead of every library: made for the
+  Emu68 JIT (longword loops for short copies, 64-byte `movem.l` blocks for long ones, branches
+  that keep a translated block whole) and measured there.
 - **Emu68's multiply.** Emu68 before upstream commit `7384501` computes a 32-bit multiply
   followed by a register-count shift wrongly, which stops five of the audio decoders from
-  opening.
+  opening. The README names the build needed; the libraries do not test for the fault.
 - **The demuxers know less without decoders.** FFmpeg warns "unspecified frame size" for MP3
   in Matroska, for one. What the player needs was there in every file tried, and the audio
   decoder's first frame is the authority on the format in any case.
+
+How it is compiled, for Emu68. Emu68 translates the 68k code into ARM code in units, and a
+unit is translated along the path it predicts at each conditional branch: a short backward
+branch taken, every other branch not taken. The other path leaves the unit, and leaving costs
+far more than the instructions do. So what costs is the number of 68k instructions and of
+taken forward branches, not cycles, and the hot path must be the one that falls through.
+
+- **-O3**, not `--enable-small`: 15 to 25 % faster on video, a little on sound.
+- **Misaligned reads** (`-mno-strict-align`, and `HAVE_FAST_UNALIGNED` and `HAVE_FAST_CLZ` set
+  in FFmpeg's `config.h` after configure, which sets neither for m68k): gcc's m68k backend
+  assumes strict alignment, and every bitstream refill and motion-compensation read was put
+  together a byte at a time. 6 to 17 % on video.
+- **Branchless clamps** (`ffmpeg/branchless_clip.h`, forced in ahead of every FFmpeg file;
+  `libavutil/common.h` defines its own only where these are absent, so FFmpeg's source is
+  untouched): FFmpeg's `av_clip_uint8()` and its kind compile to "compare, branch forward when
+  in range", which left the unit once a pixel. 12 % on MPEG-4, 21 % on MPEG-2.
+- **Profile-guided layout.** gcc lays each branch out by counts measured on the Amiga, so the
+  common path falls through: another 15 to 28 % on video, 8 to 15 % on sound, 17 to 25 % on
+  the demuxer, and a smaller binary. How the profiles are made follows.
+
+Profile-guided builds. A build knob, `KINORA_PGO`, takes `OFF`, `GENERATE` or `USE` (the
+default):
+
+- `GENERATE` builds FFmpeg in each of the three binaries with `-fprofile-arcs`. libgcov's own
+  writer finds no file under libnix and says nothing, so each library keeps the records itself
+  (`ffmpeg/pgo_dump.c`: its own `__gcov_init()`, `__gcov_info_to_gcda()` for the writing, and a
+  stub `__gcov_read_counter()` that keeps libgcov's file code out of the link) and writes them
+  as one stream through a private call after its public ones, which the `PgoDump` tool makes
+  from the training rig's process: never in an expunge, under `Forbid()`. The profiling code
+  registers itself through constructors, which a library runs only with libnix's constructor
+  lists in it and libnix's runner linked (`-u ___initcpp`); only a program's start-up brings
+  them otherwise.
+- **The training round** runs on the hardware: the instrumented binaries in their places, the
+  rigs (`FilmInfo` reading every packet, decoding the sound, decoding the video) over training
+  material made from parts of Tears of Steel (CC-BY) that the tests never use, and `PgoDump`
+  for each binary. The host merges the streams (`gcov-tool merge-stream`) into `.gcda` files,
+  kept in the repository under `profiles/<configuration>/`, with a stamp of what they were made
+  from: the FFmpeg commit, the patches, the flags.
+- `USE` copies them beside the objects and compiles with `-fbranch-probabilities`. A profile
+  belongs to one FFmpeg source and set of flags: gcc checks each function's file, line and
+  shape against it and stops the build at a mismatch, and the build stops before that when
+  the stamp differs. Moving FFmpeg, changing a patch or a flag means training again, a
+  hardware round, or building with `OFF` meanwhile. Code no training reached is laid out as
+  cold (Theora untrained: 10 % slower than without a profile), so every codec and container
+  offered is in the training.
+- The instrumented and the profile-guided builds compile the same files at the same paths,
+  line for line, so the generate build's extras (the private call, the writer) are in files of
+  their own and in a macro within a line, never an extra line of a file both compile.
 
 Sizes and costs, measured on the CM4:
 
 | What | Measured |
 |---|---|
-| `demuxer.library` | 868 KB of code, 14 KB of zeroed memory |
-| `ffmpeg.codec` | 1074 KB of code, 1.6 MB of zeroed memory |
-| In both | 309 KB of FFmpeg (libavutil, the core of libavcodec) and 49 KB of C library: a fifth of the 1.9 MB of code, the price of keeping the two apart |
+| `demuxer.library` | 1.36 MB with AVI and programme streams (868 KB as `--enable-small` built it, before them; 1.76 MB at -O3 without a profile) |
+| `ffmpegaudio.codec` | 1.53 MB with ADPCM, A-law, µ-law and LPCM (1074 KB as `--enable-small` built it, before them), 1.6 MB of zeroed memory |
+| `ffmpegvideo.codec` | 0.92 MB (1.04 MB at -O3 without a profile) |
+| In each | some 300 KB of FFmpeg (libavutil, the core of libavcodec) and 49 KB of C library, the price of keeping the three apart |
 | Sound decoding | Stereo AAC 2 %, 5.1 AC-3 or E-AC-3 6 to 7 %, 5.1 DTS 14 % of the CPU; DTS-HD MA with its lossless part 24 % on the PI4 |
 | Accuracy | Decoded sound equals the host's decode of the same source to within one step |
 
@@ -174,7 +235,8 @@ same way.
 
 ## 4. `demuxer.library`
 
-Opens a file, describes its streams, and returns its packets in file order.
+Opens a file, describes its streams, and returns its packets in file order, each stream's in
+the order it is decoded.
 
 ```c
 struct DMXSource *DMX_OpenTagList(struct TagItem *tags);   /* DMXA_FileName or DMXA_ReadHook */
@@ -188,33 +250,70 @@ LONG  DMX_Seek(struct DMXSource *source, const VCTime *time, ULONG flags);
 LONG  DMX_GetChapter(struct DMXSource *source, ULONG index, struct DMXChapter *chapter);
 ```
 
+- **Containers:** Matroska and WebM, MP4 and QuickTime, MPEG transport streams, MPEG programme
+  streams (FFmpeg's `mpeg`: VCD and DVD files, `.mpg`, `.vob`) and AVI (OpenDML's large files
+  too). A programme stream names its video by a stream number only, so FFmpeg finds the codec by
+  probing the first bytes with the raw demuxers `mpegvideo` and `m4v`; they are in the
+  configuration for that, and open lone MPEG-1, MPEG-2 and MPEG-4 video files as well. AVI keeps
+  its index at the file's end, read at the open; a file whose streams are not interleaved is read
+  by the index, the reader seeking back and forth between them.
 - **Structures** begin with a `Size` field and grow only at the end, as in
   `videocodec.library`.
 - **Times** are `VCTime` (microseconds, 64-bit), so a packet's time passes to the decoder
   unchanged.
 - **A stream** carries its kind (video, audio, subtitle), a codec number, the FourCC, the
   language and title, the codec configuration bytes, and per kind: picture size, pixel aspect
-  and frame rate, or sample rate, channels and channel layout.
+  and frame rate, or sample rate, channels, bits and the coded block's size (`BlockAlign`,
+  which ADPCM needs).
 - **Codec numbers.** Video uses `videocodec.library`'s `VCC_*`; audio uses `ACC_*` from
   `audiocodec.library`; subtitles use `DMXS_*` of our own. The demuxer includes those two
   headers and links neither library.
 - **Video packets come out ready for the decoder:** H.264 and H.265 as Annex B, with the
   configuration either in the stream or as the stream's configuration bytes, whichever
-  `videocodec.library` documents for that codec. FFmpeg's bitstream filters do the conversion
-  inside the library, so the player has no codec-specific code.
+  `videocodec.library` documents for that codec. MPEG-4 Part 2 comes a picture a packet, its
+  packed B-pictures (DivX's and Xvid's way in AVI, kept by Matroska's VfW mode) unpacked, and
+  MPEG-1 and MPEG-2 in transport and programme streams are cut into pictures by FFmpeg's
+  parser. FFmpeg's bitstream filters do the conversion inside the library, so the player has
+  no codec-specific code.
+- **A video packet's time is when its picture is shown,** and the decoders hand it on with the
+  picture, so the engine shows each at its time whatever the container. Three things make it
+  so:
+  - A packet the file gives no presentation time has the decode time of the stream's next
+    reference picture, MPEG's own rule (FFmpeg's `AVFMT_FLAG_GENPTS`): transport and programme
+    streams time their pictures only now and then. Not in AVI, whose times are frame numbers.
+  - MPEG-1, MPEG-2 and MPEG-4 Part 2 send a B-picture after both its references and show it
+    before the later one. Where the times come in decode order (AVI's frame numbers, Matroska
+    made from AVI or by libxvid, the B-picture DivX packs beside a P-picture), they are put in
+    the order the pictures are shown (`demuxer_order.c`): a stream's reference picture is held
+    with what follows it until the next reference comes, a run, and when a B-picture of the run
+    is later than its reference, the run's times are rotated by one, the B-pictures taking the
+    earlier ones. A run whose B-pictures come earlier is as the file says, so no other file is
+    changed. The picture's type is read from its header (MPEG-4's VOP, MPEG-1's and MPEG-2's
+    picture header). Such a stream's packets come a run at a time, a few behind the others.
+  - After the open and every move, a stream's packets before its first I-picture are dropped,
+    and so are the B-pictures between it and the next reference, which in an open group of
+    pictures are decoded from a picture before the move. A programme stream's moves land
+    between key frames, and it marks no key frame: I-pictures are marked here.
+
+  H.264 in AVI keeps AVI's times: its reordering goes deeper than one step, and with B-pictures
+  its pictures would come out of order (rare in AVI). Encoders that write their delay into the
+  file as empty frames (libxvid through ffmpeg) leave a gap of that many frames after the first
+  picture.
 - **A packet** has data, length, stream index, presentation and decode time, duration, and flags
   (key frame, corrupt). Its memory belongs to the library until released.
 - **`DMX_Seek`** goes to the key frame at or before the time; the answer names the time it
-  reached.
+  reached. A programme stream has no index: FFmpeg's move goes by its times and lands between
+  key frames, and the video goes on from the next I-picture, up to a group of pictures (half a
+  second on a DVD) after the time asked for, while its sound starts earlier (6.4).
 - **File access** is ours: FFmpeg's I/O callbacks call one small reader (section 9).
   `DMXA_ReadHook` lets a caller supply its own.
 - **One library, one implementation**, not a frontend with backends. The API is the part meant
   to last if a second implementation ever appears.
 
-## 5. `audiocodec.library` and `ffmpeg.codec`
+## 5. `audiocodec.library` and `ffmpegaudio.codec`
 
 Shaped like `videocodec.library` on purpose: someone who knows one knows the other. A
-freestanding frontend (MPL) with `ffmpeg.codec` as its backend (LGPL) keeps the licences apart.
+freestanding frontend (MPL) with `ffmpegaudio.codec` as its backend (LGPL) keeps the licences apart.
 
 ```c
 struct ACSession *AC_OpenSessionTagList(struct TagItem *tags);   /* ACA_Codec, ACA_Extradata, ... */
@@ -258,12 +357,23 @@ LONG  AC_QueryCodec(ULONG index, struct ACCodecInfo *info);
   layout. Folding one there would take six mono streams panned by hand, which are not locked
   to one another sample for sample, get AHI's plain pan law in place of the proper centre and
   surround levels, and cost six mixer channels.
+- **AC-3 is decoded in fixed point** (FFmpeg's `ac3_fixed`, asked for by name): float code
+  translates worst under Emu68 (3.5 to 4.4 ARM instructions a 68k one, against 1.7 to 2.5 for
+  integer code), and the fixed-point decoder takes 19 % less of the CPU than the float one for
+  samples within the codec's precision. FFmpeg's other fixed-point decoders gain nothing
+  against the profile-guided float ones (AAC) or are slower (DTS's bit-exact core).
 - **No resampling.** AHI plays any rate; a caller that needs one converts for itself.
 - **Backends** are `LIBS:audiocodec/*.codec`, found and ranked per codec row as
   `videocodec.library` does it (`libraries/audiocodec_backend.h`). The frontend is 3.8 KB,
-  `ffmpeg.codec` 1.1 MB.
+  `ffmpegaudio.codec` 1.1 MB.
 - **PCM layout flags** (`ACPCM_*`) live in `audiocodec.h`, and a demuxer stream carries them,
   so a stream's fields go to `AC_OpenSessionTags()` as they are.
+- **ADPCM** (IMA as WAVE and AVI hold it, and Microsoft's) is decoded a block at a time, and
+  an AVI packet holds several: the stream's block size goes with the session (`ACA_BlockAlign`,
+  backend interface 1.1), and its bits a sample (`ACA_Bits`), without which FFmpeg's IMA
+  decoder refuses to open. A-law, µ-law and a DVD's LPCM are FFmpeg's decoders too; LPCM says
+  its rate and channels in every packet, not in the container, so a stream of it has neither
+  until its first samples are decoded.
 
 ## 6. The engine
 
@@ -327,6 +437,25 @@ Compressed packets are queued, decoded pictures are not.
 - **A picture is shown when the clock reaches its time.** One whose successor is due as well,
   or more than 120 ms behind the clock, is dropped: showing costs time, and only pictures not
   shown let the video catch the clock up after a hold-up.
+- **A decoder that cannot keep up skips.** Dropping a picture saves its showing, not its
+  decoding; a software decoder behind the clock stays behind. So drops that come thick make
+  the engine ask the decoder to skip (`VCA_Skip`, section 14), and only those (user,
+  2026-11-28: skipping kicked in on a resize and took several key frames to go):
+  - Drops in the three seconds after the engine upset the pictures' flow itself do not
+    count: a new place (a window's new size, the full screen, its strip), which makes the
+    display and the converter anew, a move, the start after a pause, the film's start. They
+    are still counted as dropped in the statistics.
+  - Four drops within two seconds take a step: first the pictures nothing refers to
+    (B-pictures), two seconds after the last step at least.
+  - All but the key frames is the last resort: six seconds of leaving out the B-pictures
+    first, and only in a film whose key frames come at least every two seconds (measured
+    from the packets' key flags). Where they are sparser (a DivX film's every ten seconds)
+    it would show a still picture for seconds, and leaving the step costs a wait for the next
+    key frame as well.
+  - Five seconds without a drop take a step back. A step back that brings drops again within
+    five seconds doubles that wait, up to 40 s, so a film the machine cannot play whole
+    settles at the level it can; one that holds five seconds halves it again.
+  - The hardware decoders ignore the tag.
 - **The constant delay** between a block's start and the sound heard differs per driver and
   display, which nothing measures; the Play menu moves the sound and the subtitles against the
   picture.
@@ -340,6 +469,13 @@ over, so the picture is back at once however long the stream's groups of picture
 seconds in one film tried); the price is landing that much early. Stepping by key frames
 (cursor keys) and moving to a time (the slider) are the same operation. The sound AHI still
 holds at a move no longer tells the clock its time.
+
+After the open and every move the sound starts with the picture: its packets wait until the
+first video packet is read, and those that end before that picture's time are passed over (3 s
+of sound read without a picture lets it go on, for a film whose video does not come). In AVI,
+Matroska and transport streams the two start at the same key frame anyway; a programme
+stream's video starts at its next I-picture, up to a second after the sound, and without the
+wait the first picture would stand still while the sound caught the clock up.
 
 A move to the exact time would decode without showing up to the time, the sound held back
 meanwhile. The other way, the clock set to the time asked for while the sound restarts at the
@@ -359,8 +495,10 @@ and the display shows them there in one of two ways.
 
 ### 7.1 Full screen
 
-Kinora's own RTG screen in the Workbench's mode. The decoder's converter writes the screen's
-bitmap itself, so the 68k touches no pixel.
+Kinora's own RTG screen, in the Workbench's mode or one chosen in the settings: a Picasso96
+mode whose pixel format the converter writes (16, 24 or 32 bits). A chosen mode that is gone
+gives the Workbench's again. The decoder's converter writes the screen's bitmap itself, so
+the 68k touches no pixel.
 
 - **A tall bitmap of parts.** The screen's bitmap is several picture heights tall, as many as
   the card's memory takes and four at most (1080p at depth 24 takes four in the PI4's 32 MB).
@@ -388,13 +526,22 @@ bitmap itself, so the 68k touches no pixel.
   among them, so a film read from a share reads slower in full screen (130 ms for a read at
   worst, 25 in the window). Picasso96 gives no time of the blank to sleep until:
   `WaitBOVP()` does not follow the card's refresh, and the gap between two flips is two of
-  them.
+  them. A flipper that does not start refuses the full screen, and the picture stays in the
+  window: the engine scrolling for itself would wait in the scroll.
 - **The controls over the picture.** A moving pointer brings a strip of controls up along the
   screen's foot: an Intuition window at the foot of the first part, since Intuition knows
   nothing of the parts below. The picture stands in the rows above the strip, in every part.
   The decoder leaves the strip's rows alone, and nothing tells the display when the strip is
   redrawn, so it reads those rows from the first part five times a second and writes them to
   the other parts when they changed: the controls are there in every part shown.
+- **The pointer shows only while the film stands still** (user, 2026-11-25), the strip up or
+  not (user, 2026-11-28): while it plays the parts flip, and VideoCore.card moves the view at
+  once but the pointer only at the next blank, so a pointer over a flipping picture jumped
+  between two places. The strip still shows where the film is while it plays; its controls
+  are used paused. Both of the screen's windows take the same pointer, since the strip's
+  shows once it is the active one, and a new strip takes it as it opens. Once
+  the card sets the pan at the blank as it does the pointer, the pointer can show while the
+  film plays again.
 - **Ways that do not work.** Writing the picture into the part on display while the strip
   shows (one part, no flips) tears, and the next picture overwrote a subtitle as soon as it was
   drawn, so the cue flickered. Picasso96's own double buffering (`ChangeScreenBuffer()`)
@@ -544,7 +691,8 @@ container names one.
   width. They become a mask of greys a byte a pixel, white text over a black outline, and the
   mask is written into every picture before it is shown, in the window and in full screen
   alike, nothing read back: the text's edge against its outline is smooth, the outline's edge
-  against the picture is hard. The text's size follows the frame's rows, not the picture's.
+  against the picture is hard. The text's size follows the frame's rows, not the picture's:
+  a frame's rows divided by 18 at the normal size, which the settings scale from 50 to 200 %.
   In video memory, writing a box of 1280 by 160 pixels takes 0.4 ms whole and 0.5 ms as runs;
   reading it back 1.7 ms, blending in place 38 ms (the same blend in Fast RAM: 2.8 ms). Hence
   nothing is blended.
@@ -563,6 +711,8 @@ container names one.
   one takes the place nearest the edge where it fits, and one that would make the stack
   taller than half the frame is left out. A stack stands a fixed gap from the frame's edge,
   in the bar or not: a gap that followed the stack's height would move the cues that stay.
+  The gap is the settings' distance, 4 % of the frame's rows unless chosen otherwise (up to
+  30 %), halved in a bar; cues raised out of the bar stand over the picture.
 - **Kept across moves.** A stream's cues are kept, and one is not added twice when its times
   and its text are those of one there already (its packet read again after a move back): the
   cue on screen at a move's target began before it, and its packet does not come again. Two
@@ -573,38 +723,63 @@ container names one.
 
 ## 11. User interface
 
-- **One window:** the picture, a seek slider, previous, play/pause, stop and next, volume, and
-  a status line with position, length and state. ReAction (`window.class`,
-  `layout.gadget`), which ships with 3.2 and whose gadgets the test rig can drive by name.
+- **The player's window:** the picture, a seek slider, previous, play/pause, stop and next,
+  volume, and a status line with position, length and state. ReAction (`window.class`,
+  `layout.gadget`), which ships with 3.2, as are the settings and playlist windows.
   The picture follows the window's size; a click on it plays or pauses, a double click there
   or on the full screen moves the picture between the two.
-- **Menus:** Project (open, add to the playlist, open subtitles, quit), View (full screen,
-  statistics, the picture's shape), Play (play or pause, stop, jump to time, chapters, the
-  sound and the subtitles moved in time, 50 ms and 250 ms a pick), Audio (tracks, AHI unit,
-  whether to share it with other programs), Subtitles (off, tracks, font) and Playlist (next,
-  previous, the films). The menus are made again from a table after a film opens and after
-  every item picked; of several items picked in one go only the first counts.
+- **Menus:** Project (open, open recent, add to the playlist, open subtitles, close, settings,
+  quit), View (full screen, statistics, the picture's shape), Play (play or pause, stop, jump
+  to time, chapters, the sound and the subtitles moved in time, 50 ms and 250 ms a pick),
+  Audio (the film's tracks), Subtitles (off, the film's tracks) and Playlist (next, previous,
+  the playlist window). The menus hold what changes with the film; what is set once and left
+  is in the settings window (user, 2026-11-27). They are made again from a table after a film
+  opens and after every item picked; of several items picked in one go only the first counts.
+- **The settings window:** the AHI unit and sharing it; the subtitles' font file, size and
+  distance from the edge; the full screen's mode, the Workbench's or one chosen through ASL's
+  screen mode requester, which lists only the modes the full screen can be in. A change
+  takes effect at once, a film that stands still drawn again with it. Save writes the
+  settings; Cancel, the close gadget and Esc put back what the window opened with, as does
+  quitting with it open. There is no Use: the volume, the drawer and the recent films are
+  written whenever the player quits, so a setting used for one run only would need a second
+  copy of the settings.
+- **The playlist window:** a list browser of the films, the open one marked, with Add,
+  Remove, Up, Down and Clear; a double click or Return plays a film, Del takes it out, icons
+  dropped on it join the list. It follows the playlist by a count of its changes, so
+  whatever changed it (the window, a menu, ARexx, a drop, a film's end) it is shown anew on
+  the event loop's next pass. The open film taken out of the list plays on; the playlist then
+  keeps its place, so the film there is the next and the one before it the previous.
 - **Keys** follow Media Player Classic where the Amiga keyboard allows: space, cursor left and
   right (ten seconds), PgUp and PgDn (previous and next film), A and S (next audio and
   subtitle track), F (full screen), J (jump to time), I (statistics), Esc.
 - **Full screen** is a borderless window on the player's own screen. A moving pointer brings
-  the strip of controls up along the screen's foot for three seconds (7.1); the pointer is
-  hidden while the strip is away.
+  the strip of controls up along the screen's foot for three seconds (7.1); the pointer shows
+  only while the film is paused (7.1).
 - **The playlist** is the films named on the command line, chosen in the file requester
   (several at once, films by their names' endings) or dropped on the window or the icon,
-  listed in its menu and played one after the other.
-- **Settings** (unit, sharing it, volume, the last drawer, the font) are kept in
-  `ENVARC:Kinora.prefs`.
-- **ARexx port `KINORA`:** PLAY, PAUSE, STOP, SEEK, OPEN, ADD, SUBTITLES, NEXT, PREVIOUS,
+  listed in the playlist window and played one after the other. The last five films that
+  started playing are the recent ones, newest first, in Project > Open recent.
+- **Settings** (unit, sharing it, volume, the last drawer, the font, the subtitles' size and
+  distance, the full screen's mode, the recent films, the playlist window's place) are kept in
+  `ENVARC:Kinora.prefs`, lines of name=value read by tables; a name not known or a value out
+  of range is passed over.
+- **ARexx port `KINORA`:** PLAY, PAUSE, STOP, SEEK, OPEN, CLOSE, ADD, SUBTITLES, NEXT, PREVIOUS,
   FULLSCREEN, QUIT, STATUS, TRACKS, AUDIO, SUBTITLE, UNIT, VOLUME, ASPECT, DELAY, CHAPTERS,
-  PLAYLIST, FONT, STATISTICS and SIZE, answering in RESULT. It is also how the features are
-  checked on the machine.
+  PLAYLIST (with the playlist window's words), RECENT, FONT, SUBTITLESIZE, SUBTITLEDISTANCE,
+  SCREENMODE, SETTINGS (with Save and Cancel), STATISTICS and SIZE, answering in RESULT. It is
+  also how the features are checked on the machine: the agent's tree of the user interface
+  sees a ReAction window's root layout, not the gadgets in it.
 - **Statistics,** a panel written into each picture like a subtitle and summed up once a
-  second: the file, the video and audio streams and where they go, pictures a second with the
-  totals shown and dropped, how far behind the clock pictures are shown, the bit rates read,
-  what waits in the queues and the sound ring, the way to AHI and the chunks it played, the clock
-  and its state, where the last move landed, and where the engine's parts stand. ARexx
-  `STATISTICS` answers the same lines; that is how a film that does not move is looked into.
+  second, for the viewer: the file, the video and audio streams and where they go (the size
+  shown, the AHI unit, shared or held), the backends that decode them as the libraries chose
+  them (`VCA_BackendName`, `VCA_ConverterName`, `ACA_BackendName`), pictures a second with the
+  drops, how late they are shown and what the decoder skips, the bit rates read, and how far
+  the reading and the decoding are ahead of the clock. Its lines stay short, since a panel
+  wider than the picture is not drawn. ARexx `STATISTICS` answers those lines and the engine's
+  inner workings behind them: the frame and the picture's place in it, the full screen's parts,
+  the queues' packets, the chunks AHI played and its restarts, the clock and its state, where
+  the last move landed, and where the engine's parts stand. That is how a film that does not
+  move is looked into.
 - **No screen blanker inhibit:** an empty mouse event every ten seconds while playing did not
   keep the blanker away.
 
@@ -614,16 +789,21 @@ container names one.
 kinora/
   demuxer/          the library, its reader, the FFmpeg glue
   audiocodec/       the frontend; ffmpeg/ the backend
+  videocodec-ffmpeg/ ffmpegvideo.codec, videocodec.library's backend with FFmpeg's video decoders
   player/           engine/, display/, audio/, subtitles/, gui/
-  tools/            DMXInfo, ACInfo
-  ffmpeg/           how FFmpeg is built: CMake glue, the Amiga shim and atomics
+  tools/            FilmInfo; PgoDump (profile-generating builds only)
+  ffmpeg/           how FFmpeg is built: CMake glue, the Amiga shim and atomics, the branchless
+                    clamps, the profile writer
+  profiles/         the profile-guided builds' profiles, one drawer per FFmpeg configuration
   freetype/         how FreeType is built for the player
-  external/         FFmpeg n9.0.2, FreeType, emu68-common: submodules, never modified
+  external/         FFmpeg n9.0.2, FreeType, emu68-common: submodules, never modified;
+                    videocodec-library and rpivid-codec: the video libraries, repositories
+                    of their own that Kinora builds and ships
   patches/          our FFmpeg patches, applied to a copy in the build tree
-  scripts/          docker-build.sh, build-ffmpeg.sh
+  scripts/          docker-build.sh, build-ffmpeg.sh, pgo-train.py (the training round)
   include/          public headers, sfd files
   installer/, dist/ the Installer script, the icons and the font
-  tests/            the code gates and the hardware suite
+  tests/            the code gates, the hardware suite, the material and the training material
   docs/
 ```
 
@@ -632,9 +812,19 @@ kinora/
   are linked into the two binaries.
 - `emu68-common` is a submodule, used for what it has: the library skeleton, debug output,
   the test harness.
+- **The video libraries are built here, not taken from elsewhere.** `videocodec-library`
+  (`videocodec.library`, `videocore.codec`, `vcjpeg.datatype`, `VCInfo`, `VCGrab`) and
+  `rpivid-codec` (`rpivid.codec`) are submodules, each a repository with its own version.
+  `scripts/docker-build.sh` builds them after `emu68-common` into `build/video-prefix`;
+  Kinora finds `VideoCodec` there, takes `videocodec.h` from it, and its install tree and
+  archive carry their files. Each part lives with its main backend: what is built from FFmpeg
+  is in this tree, the VideoCore's in `videocodec-library`. `vchiq.device`, the link under
+  `videocore.codec`, stays in the Emu68 driver stack.
 - **One version for the repository,** which every binary reports.
-- **No example programs:** Kinora is the example of the libraries' use, and `DMXInfo` and
-  `ACInfo` show what each library makes of a file.
+- **No example programs:** Kinora is the example of the libraries' use, and `FilmInfo`
+  shows what each library makes of a file: one shell tool for the container, the sound, the
+  video and the codec tables, in `name=value` lines the tests read. The video libraries'
+  setup check is their own `VCInfo`, which knows no film.
 - The package target makes the release archive with its Installer script.
 
 ## 13. Testing
@@ -644,17 +834,159 @@ kinora/
 - **`tests/run.sh hw --server <machine>`:** a pytest suite on the common harness
   (`emu68test`) that installs the build in its real places first (the machine's own files are
   kept on the host) and runs on the Amiga:
-  - the demuxer, through `DMXInfo`: every packet of three containers against ffprobe, the
-    streams, tracks and chapters described, moves to the key frame before, files that are no
-    films refused;
-  - the sound, through `ACInfo`: the codec table, nine codecs decoded to within one step of
-    the host's decode of the same FFmpeg source, the mix down, 32-bit output;
-  - the player, through its ARexx port: a film to its end without drops, time kept against
+  - the demuxer, through `FilmInfo`: every packet of five containers against ffprobe, the
+    streams, tracks and chapters described, moves to the key frame before (in AVI and a
+    programme stream, to an I-picture), files that are no films refused;
+  - the sound, through `FilmInfo AUDIO`: the codec table, fourteen codecs decoded to within one
+    step of the host's decode of the same FFmpeg source, the mix down, 32-bit output;
+  - the video decoders, through `FilmInfo VIDEO`: their rows, each codec's pictures bit for bit
+    as the host's decode of the same FFmpeg source gives them (an MD5 a picture), also in AVI
+    and programme streams, each picture at its time, one picture's time after the one before
+    (AVI's decode-order times, DivX 5's packed B-pictures, which `tests/material/avi_pack.py`
+    makes since ffmpeg cannot), the choice of backend (H.264 stays on the VideoCore), skipping,
+    a move, the chain to RGB, and each codec's share of the CPU;
+  - the player, through its ARexx port: a film to its end without drops (also from AVI and a
+    VOB, with their sound), time kept against
     the host's clock, pause, moves, tracks, subtitles seen on the screen (a line of Polish,
     Russian and Greek against the host's drawing of it with the same font, another font,
-    slanted and heavy words, a cue at the top and one in the bar under a wide picture), the
-    statistics, forty moves in a paused film, the film going on after a job of higher
-    priority held the machine, full screen and back, the shapes while paused, the playlist,
-    chapters, delays, settings.
+    slanted and heavy words, a cue at the top and one in the bar under a wide picture, a cue
+    at 150 % and raised from the foot), the statistics, forty moves in a paused film, the
+    film going on after a job of higher priority held the machine, full screen and back, its
+    screen mode chosen or gone, the shapes while paused, the playlist and its window's words,
+    the recent films, chapters, delays, settings and the settings window's Save and Cancel.
 - **The material** is made with the host's ffmpeg; the references come from host builds of the
   patched FFmpeg source the libraries are built from.
+
+## 14. `ffmpegvideo.codec`: video decoded on the 68k
+
+The VideoCore decodes H.264 and MJPEG and the HEVC block H.265. The other codecs films come
+in are decoded by FFmpeg on the 68k, in `LIBS:videocodec/ffmpegvideo.codec`, a backend of
+`videocodec.library` like the VideoCore's: a player opens a decoder session and gets pictures,
+whoever decodes them, and the converter behind the decoder scales them and makes RGB, so the
+68k touches no pixel beyond decoding it.
+
+- **Names of their own.** A library's name is how Exec finds one already loaded, so an
+  `OpenLibrary()` of `LIBS:videocodec/ffmpegaudio.codec` could be answered with an audio
+  `ffmpegaudio.codec` in memory: the two backends are `ffmpegaudio.codec` and
+  `ffmpegvideo.codec`.
+- **Codecs:** MPEG-1, MPEG-2, MPEG-4 Part 2 (Xvid, DivX 4 and later), MS-MPEG4 versions 1 to 3
+  (DivX 3; the version from the container's FourCC), H.263 (with H.263+, Sorenson Spark and
+  Intel's), Theora. Not VP8, which needs 1.6 CPUs at standard definition, nor VP9, AV1, VC-1
+  or a second H.264 and H.265.
+- **Rows of priority 0,** sessions only, I420 out: the VideoCore keeps what it decodes, and a
+  client asking for RGB gets the VideoCore's converter behind this decoder (architecture.md of
+  videocodec-library, 4.1). The rows' sizes are what the formats allow, not what keeps up: up to
+  1920×1088 (H.263 its own 1408×1152), a picture of larger area refused. A machine at
+  2.5 GHz plays what one at 1.8 cannot, and a film that chokes skips (below); the hardware
+  rows' limits were hard ones, past which the firmware breaks.
+
+What it costs, on the CM4 at 1.8 GHz, the profile-guided build, as a share of one CPU in real
+time: 40 s of Tears of Steel (live action and battle, parts the training never sees) read from
+`RAM:` by `FilmInfo VIDEO` at priority 6 as fast as it goes, so the reading, the hand-offs between the
+client, the session's process and FFmpeg, and the converter's calls are counted too:
+
+| Film | Decoding | To a window | To 1920×1080 |
+|---|---|---|---|
+| Xvid 720×400, 1.2 Mbit/s | 21.5 % | 25.5 % | 27.3 % |
+| DivX 3 720×400 | 18.5 % | | |
+| Xvid with quarter-pixel vectors and GMC | 44.3 % | | |
+| Theora 720×400 | 34.6 % | | |
+| MPEG-2 576i, 6 Mbit/s | 42.9 % | 47.5 % | 49.0 % |
+| Xvid 1280×534, 3.5 Mbit/s | 49.9 % | | 56.2 % |
+| MPEG-2 1080i, 15 Mbit/s | 166 % in the probe, before the IDCTs of 14.2; not measured since | | |
+
+Kinora's FFmpeg as it was built before (`--enable-small`) took 49 % for the Xvid film and 89 %
+for the MPEG-2 one, FFmpeg's decoder alone. The decoder alone, from memory in one task, was 2
+to 4 points less than the table: the probe's 19 % and 38.5 %; the rest is the reading (half a
+point to one), the session's hand-offs, and a training of twelve codecs where the probe's had
+four. The converter costs the 68k 1.0 ms a picture to a window and 1.6 ms to a whole 1080p
+frame (the round trips to the VPU), and decoding beside it runs 1 to 3 points slower (the
+ISP's memory traffic). The worst second of each is about half again its average: MPEG-2 576i
+peaked at 51 % in the probe.
+
+### 14.1 A session
+
+```mermaid
+flowchart LR
+    client["client's task<br/>(Kinora's engine)"] -- "VC_SendPacket()" --> input["input packets<br/>in order"]
+    input --> process["the session's process<br/>FFmpeg's decoder"]
+    process -- "packet back" --> client
+    process -- "get_buffer2" --> pool["frames: I420<br/>FFmpeg writes them"]
+    pool -- "VCIT_Frame" --> chain["the converter<br/>(the VideoCore's ISP)"]
+    chain -- "frame back" --> pool
+    chain -- "RGB" --> client
+```
+
+- **A process a session,** named after the client's task with " decoder" behind (Kinora's is
+  "Kinora engine decoder", so Executive's `TASK Kinora* NOSCHEDULE` covers it), one priority
+  below the client: the engine's sound decoding, its copies and its subtitles go first, and
+  the video takes what is left. The client's calls never wait for a picture: `VC_SendPacket()`
+  queues, `VC_Poll()` hands over what the process has finished, and the process signals the
+  client as the session's rules say. FFmpeg has one caller at a time (rule 7), so two
+  sessions decode by turns.
+- **Input.** The library's own packets (8 of 256 KB unless asked otherwise, each with
+  FFmpeg's padding behind it). A framed session (`VCA_Framed`: a picture cut over packets
+  marked at its start and end, the pieces between marked neither) has its pieces joined again
+  in FFmpeg's packet, the one copy a picture gets; an unframed one goes through FFmpeg's
+  parser for the codec (MPEG-1, MPEG-2 and MPEG-4 come as any cut of their start codes), which
+  reads the packet in place. A packet comes back once its bytes are used: the client is held
+  to the decoder's pace, and the packets it holds back stay in its queue. Times go through as
+  microseconds; FFmpeg's best-effort time is each picture's.
+- **Frames.** FFmpeg decodes into the session's frames (`get_buffer2`), made when the
+  picture's size is first known: I420, each row of whole 64 bytes, the luma rows a multiple of
+  16 and at least as many as FFmpeg writes (an MPEG-4 picture of 400 rows writes 416), the two
+  chroma planes after them, every frame on a 64-byte line: what the VideoCore's converter
+  imports. The VPU reaches only the lowest GiB of the Pi's RAM, so the frames come from
+  emu68-common's DMA pool over the Fast RAM regions wholly below it, as rpivid.codec's do, and
+  never from beyond it: a picture without room there fails the session. Plain Fast RAM fills
+  the low GiB first (Exec's list has it first, all at one priority), so a large file in `RAM:`
+  can take all of it, and then no 68k-decoded film shows a picture until the memory comes
+  back. `VCStreamInfo` gives the frame (width in the row's pixels, the rows) and
+  the picture as its crop, which the chain passes on as the converter's source rectangle. 8
+  frames unless asked (4 to 32): FFmpeg holds two or three as references, the converter one
+  or two, the rest let the decoder run ahead. A frame is free again when FFmpeg and the client
+  have both let go of it; with none free, the process waits for one. A new size makes a new set
+  (`VCEV_StreamInfo` again, `VCB_OutputFrame()` lists the new one), and the old set goes when
+  its last frame is free.
+- **Colour.** From the stream (its matrix and range as FFmpeg read them, and for a stream that
+  names none the usual guess: BT.709 from 720 rows up, BT.601 below, limited range), or
+  `VCA_ColorSpace` when the client knows better.
+- **Moves and the end.** `VC_Flush()` gives the queued packets back unused and drops the
+  pictures not yet handed out; the process flushes FFmpeg before it decodes anything sent
+  after, and a picture it was decoding at the flush is dropped when it comes out. An empty
+  packet marked `VCPF_EndOfStream` drains FFmpeg, and `VCEV_EndOfStream` follows the last
+  picture; the session then takes a stream again.
+- **Errors.** A damaged picture is FFmpeg's to conceal and no error; out of memory, a picture
+  larger than the row allows, or FFmpeg calling `exit()` (which lands in the call, as in the
+  other two binaries) fails the session with `VCEV_Error`.
+- **Skipping** (`VCA_Skip`, new in videocodec.library 0.7, at the open and with
+  `VC_SetAttrsTags()`): `VCSK_None`, `VCSK_NonReference` (the pictures no other picture is
+  decoded from: B-pictures), `VCSK_NonKey` (all but the key frames). FFmpeg's `skip_frame`:
+  a skipped picture is not decoded and not handed out, so the client sees fewer pictures, each
+  shown longer. Without B-pictures MPEG-2 576i costs about a third of its decode, key frames
+  alone a few points. The engine's use of it is in 6.3; backends that cannot skip ignore it.
+- **Counters** (`VCInfo COUNTERS`): pictures decoded, skipped and damaged, and how often the
+  process waited for a free frame.
+
+### 14.2 The IDCTs
+
+FFmpeg's 8-bit simple IDCT (MPEG-1, MPEG-2, DivX 3, H.263 and MPEG-4 from other encoders) and
+Xvid's, bit for bit, laid out for Emu68 (patch 0003, `libavcodec/m68k/`, chosen where FFmpeg
+chose exactly these two; lowres, other depths and other IDCTs keep FFmpeg's):
+
+- a mask of the rows that hold coefficients picks one of nine column passes made for it (rows
+  0, 0-1, 0-2, 0-3, the same with row 7, which MPEG-2's mismatch control fills in half its
+  blocks, and all), so no column tests its rows;
+- a block whose coefficients are all in column 0 (more than half of DivX 3's, four in ten of
+  Xvid's) needs one column transform: whole rows are stored, or added four pixels at a time
+  with saturation done in a word;
+- every product is one `muls.w`, where gcc makes shift-and-add chains of 10 to 20 instructions;
+  clamping is a load from a table; Xvid's column pass writes the clamped pixels itself instead
+  of a second pass over the block;
+- the simple IDCT's column passes are in 68k assembly, made by one macro from the row mask: 5
+  instructions a pixel to put, 7 to add, against gcc's 8 to 10.
+
+Per block on the CM4: MPEG-2 add 1955 → 1109 ns, put 1872 → 1031; Xvid add 1643 → 1044, put
+1488 → 744; DivX 3 put 1975 → 516. In the decoder: MPEG-2 576i 46 → 39 %, DivX 3 22 → 16 %,
+Xvid 21 → 19 %. What is left of MPEG-2's time: the IDCT 14 points, motion compensation 10,
+the bitstream 10.

@@ -6,6 +6,7 @@
  */
 #include <string.h>
 #include <exec/memory.h>
+#include <graphics/modeid.h>
 #include <proto/exec.h>
 #include <proto/Picasso96.h>
 #include <proto/videocodec.h>
@@ -54,6 +55,19 @@ RGBFTYPE format_to_p96(ULONG format)
 		if (pixel_formats[i].format == format)
 			return pixel_formats[i].p96;
 	return RGBFB_NONE;
+}
+
+/**
+ * display_mode_usable() - Whether the full screen can be in a screen mode.
+ * @mode: the mode's display ID
+ *
+ * Return: TRUE for a Picasso96 mode whose pixel format the converter writes;
+ * FALSE for any other, and for one that does not exist (any more).
+ */
+BOOL display_mode_usable(ULONG mode)
+{
+	return mode != (ULONG)INVALID_ID && p96GetModeIDAttr(mode, P96IDA_ISP96) &&
+	       format_from_p96((RGBFTYPE)p96GetModeIDAttr(mode, P96IDA_RGBFORMAT)) != VCF_Unknown;
 }
 
 /**
@@ -127,7 +141,8 @@ ULONG display_choose_format(const struct display *display, ULONG codec)
  * @task:   the engine's task
  * @signal: what to signal it with when a picture has reached the screen
  *
- * Return: the display, NULL for nowhere, without memory, or for a screen whose bitmap the decoder cannot write.
+ * Return: the display, NULL for nowhere, without memory, or for a screen whose bitmap the decoder cannot write or
+ * whose flipper did not start.
  */
 struct display *display_open(const struct display_place *place, struct Task *task, ULONG signal)
 {
@@ -145,7 +160,7 @@ struct display *display_open(const struct display_place *place, struct Task *tas
 	display->flip_to = NO_PART;
 	if (place->screen != NULL && !screen_open(display))
 	{
-		FreeVec(display);
+		display_close(display);
 		return NULL;
 	}
 	return display;

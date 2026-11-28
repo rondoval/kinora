@@ -94,6 +94,8 @@ static LONG decoder_open(struct session *session, const AVCodec *codec, const st
 
 	decoder->sample_rate = (int)params->SampleRate;
 	decoder->bits_per_coded_sample = (int)params->Bits;
+	if (AC_HAS_FIELD(params->Size, struct ACSessionParams, BlockAlign))
+		decoder->block_align = (int)params->BlockAlign; /* ADPCM's blocks: a packet may hold several */
 	decoder->pkt_timebase = (AVRational){1, MICROSECONDS_PER_SECOND};
 	if (params->Channels != 0)
 		av_channel_layout_default(&decoder->ch_layout, (int)params->Channels);

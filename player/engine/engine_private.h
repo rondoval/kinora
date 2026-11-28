@@ -50,6 +50,7 @@ enum engine_command
 	COMMAND_UNIT,
 	COMMAND_SUBTITLE_FILE,
 	COMMAND_SUBTITLE_FONT,
+	COMMAND_SUBTITLE_LOOK,
 	COMMAND_CHAPTERS,
 	COMMAND_DELAYS,
 	COMMAND_ASPECT,
@@ -88,6 +89,11 @@ union engine_arguments
 	} unit; /* COMMAND_UNIT */
 	CONST_STRPTR subtitle_file; /* COMMAND_SUBTITLE_FILE: the SubRip file */
 	CONST_STRPTR subtitle_font; /* COMMAND_SUBTITLE_FONT: the font file */
+	struct
+	{
+		ULONG size;     /* the font's size in percent of the normal one */
+		ULONG distance; /* the gap from the frame's edge, in percent of its rows */
+	} subtitle_look; /* COMMAND_SUBTITLE_LOOK */
 	struct
 	{
 		struct engine_chapter *list; /* filled in */
@@ -129,7 +135,7 @@ struct statistics
 	ULONG audio_bytes;      /* and of audio packets */
 
 	/* The second before */
-	ULONG last_rate;        /* pictures shown, in hundredths a second */
+	ULONG last_rate;        /* pictures shown a second, in hundredths (RATE_HUNDREDTHS) */
 	LONG last_behind_mean;  /* milliseconds they were behind on average */
 	LONG last_behind_most;  /* and at most */
 	ULONG last_video_kbps;  /* the video read, in kbit/s */
@@ -161,6 +167,21 @@ struct reads
 };
 
 /* The engine */
+/* What the video decoder is asked to leave out (VCA_Skip) while pictures come too late, and since when (architecture 6.3) */
+struct video_skip
+{
+	ULONG level;         /* VCSK_*, the one the decoder has; ULONG as VCA_Skip carries it (videocodec.h defines, not an enum) */
+	VCTime changed;      /* clock_wall() at the last step up or back */
+	VCTime lowered;      /* clock_wall() at the last step back; 0 when the last step was up, or the step back has held */
+	VCTime hold;         /* how long without a dropped picture before a step back */
+	VCTime last_drop;    /* clock_wall() at the last dropped picture that counted */
+	VCTime calm_until;   /* clock_wall() until which drops do not count: the engine upset the pictures' flow itself */
+	ULONG drops;         /* drops that counted since drops_since */
+	VCTime drops_since;  /* clock_wall() where that count began */
+	VCTime key_last;     /* the time of the last key frame sent to the decoder, VC_TIME_UNKNOWN after an open or a move */
+	VCTime key_gap_most; /* the longest gap between two key frames seen in the film, 0 before two were seen */
+};
+
 struct engine
 {
 	/* The task */
@@ -196,6 +217,8 @@ struct engine
 	struct DMXStream video_stream;               /* that stream */
 	struct queue video_queue;                    /* its packets read ahead */
 	struct VCSession *video_decoder;             /* the decoder, NULL for none */
+	char video_backend[VC_BACKEND_NAME_SIZE];    /* the backend videocodec.library gave it (VCA_BackendName) */
+	char video_converter[VC_BACKEND_NAME_SIZE];  /* the backend of the converter behind it, empty for none (VCA_ConverterName) */
 	BYTE video_signal;                           /* the signal it wakes the engine with */
 	struct VCPacket *free_packets[FREE_PACKETS]; /* its input packets waiting to be filled */
 	ULONG free_packet_count;                     /* how many */
@@ -210,6 +233,7 @@ struct engine
 	struct display *display;                     /* where pictures go, NULL for nowhere */
 	BOOL first_shown;                            /* a picture was shown since the file was opened or moved in */
 	BOOL catching_up;                            /* since a move no picture came in time yet: late ones are not counted as dropped */
+	struct video_skip skip;                      /* what the decoder is asked to leave out while it falls behind (architecture 6.3) */
 	ULONG frames_shown;                          /* pictures shown */
 	ULONG frames_dropped;                        /* pictures too late to show */
 
@@ -218,6 +242,7 @@ struct engine
 	struct DMXStream audio_stream;     /* that stream */
 	struct queue audio_queue;          /* its packets read ahead */
 	struct ACSession *audio_decoder;   /* the decoder, NULL for none */
+	char audio_backend[AC_BACKEND_NAME_SIZE]; /* the backend audiocodec.library gave it (ACA_BackendName) */
 	struct audio_out *audio_out;       /* the sound output, opened at the first decoded samples */
 	BYTE audio_signal;                 /* the signal the output wakes the engine with */
 	BOOL audio_32bit;                  /* ahi.device takes 32-bit samples, so the decoder gives them (audio_open()) */
@@ -228,6 +253,7 @@ struct engine
 	struct audio_placement placement;  /* 7.1: where AHI's channels are in the pending samples, for the layout last seen */
 	BOOL audio_end_sent;               /* the decoder was told the stream's end */
 	BOOL audio_done;                   /* and gave its last samples */
+	BOOL sound_waits;                  /* since the open or a move the sound waits for the first picture's time (audio_feed()) */
 
 	/* The subtitles */
 	struct subtitles *subtitles;            /* the cues of the stream or file chosen */
@@ -280,6 +306,7 @@ void video_close(struct engine *engine);
 void video_pump(struct engine *engine);
 void video_flush(struct engine *engine);
 void video_place(struct engine *engine, const struct display_place *place);
+void video_calm(struct engine *engine);
 void video_attach(struct engine *engine);
 
 /* engine_audio.c */
@@ -292,7 +319,7 @@ void audio_flush(struct engine *engine);
 void stats_reset(struct engine *engine);
 void stats_count_seek(struct engine *engine, VCTime time);
 void stats_count_frame(struct engine *engine, const struct VCFrame *frame);
-void stats_write(struct engine *engine, char *to, ULONG room);
+void stats_write(struct engine *engine, char *to, ULONG room, BOOL inside);
 void stats_tick(struct engine *engine);
 
 #endif /* KINORA_ENGINE_PRIVATE_H */

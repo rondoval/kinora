@@ -1,6 +1,6 @@
 # audiocodec.library (LIBS:): audio decoders behind one API (docs/architecture.md section 5).
 # The frontend is MPL-2.0 and freestanding; the decoders are in its backend,
-# LIBS:audiocodec/ffmpeg.codec, which is LGPL-2.1-or-later as the FFmpeg in it.
+# LIBS:audiocodec/ffmpegaudio.codec, which is LGPL-2.1-or-later as the FFmpeg in it.
 
 emu68_sfd_headers(audiocodec_sfd_headers ALL
     OUTPUT_DIR ${CMAKE_BINARY_DIR}/generated/include
@@ -27,25 +27,26 @@ set_target_properties(audiocodec_library PROPERTIES
     SUFFIX ".library"
 )
 
-add_executable(ffmpeg_codec
+add_executable(ffmpegaudio_codec
     $<TARGET_OBJECTS:kinora_ffmpeg_library>
     ffmpeg/codec_lib.c
     ffmpeg/codec_table.c
     ffmpeg/codec_session.c
 )
-target_compile_options(ffmpeg_codec PRIVATE ${KINORA_COMPILE_OPTIONS})
-target_include_directories(ffmpeg_codec PRIVATE
+target_compile_options(ffmpegaudio_codec PRIVATE ${KINORA_COMPILE_OPTIONS})
+target_include_directories(ffmpegaudio_codec PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/ffmpeg
 )
-target_link_libraries(ffmpeg_codec PRIVATE Kinora::ffmpeg_audio)
+target_link_libraries(ffmpegaudio_codec PRIVATE Kinora::ffmpeg_audio)
 # libnix's library start-up: the resident tag and the standard vectors
-target_link_options(ffmpeg_codec PRIVATE -ramiga-lib -s)
-set_target_properties(ffmpeg_codec PROPERTIES
-    OUTPUT_NAME ffmpeg
+target_link_options(ffmpegaudio_codec PRIVATE -ramiga-lib -s)
+kinora_ffmpeg_binary(ffmpegaudio_codec)
+set_target_properties(ffmpegaudio_codec PROPERTIES
+    OUTPUT_NAME ffmpegaudio
     SUFFIX ".codec"
 )
 
 install(TARGETS audiocodec_library RUNTIME DESTINATION LIBS)
-install(TARGETS ffmpeg_codec RUNTIME DESTINATION LIBS/audiocodec)
+install(TARGETS ffmpegaudio_codec RUNTIME DESTINATION LIBS/audiocodec)
 install(FILES ${CMAKE_SOURCE_DIR}/include/libraries/audiocodec_backend.h DESTINATION Developer/include/libraries)

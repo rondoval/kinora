@@ -28,6 +28,8 @@ add_executable(Kinora
     gui/gui_menu.c
     gui/gui_screen.c
     gui/gui_playlist.c
+    gui/gui_list.c
+    gui/gui_settings.c
     gui/gui_rexx.c
     gui/gui_wb.c
     gui/gui_jump.c

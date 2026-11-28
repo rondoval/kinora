@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
- * codec_table.c - the codecs ffmpeg.codec decodes: its rows of the codec
+ * codec_table.c - the codecs ffmpegaudio.codec decodes: its rows of the codec
  * table, and FFmpeg's decoder for an ACC_*.
  */
 #include <libavutil/avstring.h>
@@ -12,24 +12,35 @@
 /* A codec this backend has a row for */
 struct codec_row
 {
-	ULONG codec;       /* ACC_* */
-	enum AVCodecID id; /* FFmpeg's; AV_CODEC_ID_NONE for ACC_PCM, which pcm_decoders[] resolves */
-	const char *name;  /* for people */
+	ULONG codec;         /* ACC_* */
+	enum AVCodecID id;   /* FFmpeg's; AV_CODEC_ID_NONE for ACC_PCM, which pcm_decoders[] resolves */
+	const char *name;    /* for people */
+	const char *decoder; /* FFmpeg's decoder by name, NULL for the one it has for the codec */
 };
 
+/*
+ * AC-3 goes to FFmpeg's fixed-point decoder, the only one built: float code translates worst
+ * under Emu68, and it takes a fifth less of the CPU than the float one (docs/architecture.md,
+ * section 5).
+ */
 static const struct codec_row codec_rows[] = {
-    {ACC_AAC, AV_CODEC_ID_AAC, "AAC"},
-    {ACC_AAC_LATM, AV_CODEC_ID_AAC_LATM, "AAC (LATM)"},
-    {ACC_AC3, AV_CODEC_ID_AC3, "AC-3"},
-    {ACC_EAC3, AV_CODEC_ID_EAC3, "E-AC-3"},
-    {ACC_DTS, AV_CODEC_ID_DTS, "DTS"},
-    {ACC_MP3, AV_CODEC_ID_MP3, "MP3"},
-    {ACC_MP2, AV_CODEC_ID_MP2, "MP2"},
-    {ACC_Opus, AV_CODEC_ID_OPUS, "Opus"},
-    {ACC_Vorbis, AV_CODEC_ID_VORBIS, "Vorbis"},
-    {ACC_FLAC, AV_CODEC_ID_FLAC, "FLAC"},
-    {ACC_TrueHD, AV_CODEC_ID_TRUEHD, "TrueHD"},
-    {ACC_PCM, AV_CODEC_ID_NONE, "PCM"},
+    {ACC_AAC, AV_CODEC_ID_AAC, "AAC", NULL},
+    {ACC_AAC_LATM, AV_CODEC_ID_AAC_LATM, "AAC (LATM)", NULL},
+    {ACC_AC3, AV_CODEC_ID_AC3, "AC-3", "ac3_fixed"},
+    {ACC_EAC3, AV_CODEC_ID_EAC3, "E-AC-3", NULL},
+    {ACC_DTS, AV_CODEC_ID_DTS, "DTS", NULL},
+    {ACC_MP3, AV_CODEC_ID_MP3, "MP3", NULL},
+    {ACC_MP2, AV_CODEC_ID_MP2, "MP2", NULL},
+    {ACC_Opus, AV_CODEC_ID_OPUS, "Opus", NULL},
+    {ACC_Vorbis, AV_CODEC_ID_VORBIS, "Vorbis", NULL},
+    {ACC_FLAC, AV_CODEC_ID_FLAC, "FLAC", NULL},
+    {ACC_TrueHD, AV_CODEC_ID_TRUEHD, "TrueHD", NULL},
+    {ACC_PCM, AV_CODEC_ID_NONE, "PCM", NULL},
+    {ACC_ADPCM_IMA, AV_CODEC_ID_ADPCM_IMA_WAV, "IMA ADPCM", NULL},
+    {ACC_ADPCM_MS, AV_CODEC_ID_ADPCM_MS, "MS ADPCM", NULL},
+    {ACC_ALaw, AV_CODEC_ID_PCM_ALAW, "A-law", NULL},
+    {ACC_MuLaw, AV_CODEC_ID_PCM_MULAW, "mu-law", NULL},
+    {ACC_PCM_DVD, AV_CODEC_ID_PCM_DVD, "DVD LPCM", NULL},
 };
 
 /* An uncompressed layout and FFmpeg's decoder for it */
@@ -107,12 +118,14 @@ static enum AVCodecID pcm_decoder_id(ULONG bits, ULONG flags)
  */
 const AVCodec *table_decoder(const struct ACSessionParams *params)
 {
-	enum AVCodecID id = AV_CODEC_ID_NONE;
 	if (params->Codec == ACC_PCM)
-		id = pcm_decoder_id(params->Bits, params->PcmFlags);
-	else
-		for (ULONG i = 0; i < ARRAY_COUNT(codec_rows); i++)
-			if (codec_rows[i].codec == params->Codec)
-				id = codec_rows[i].id;
-	return id != AV_CODEC_ID_NONE ? avcodec_find_decoder(id) : NULL;
+	{
+		enum AVCodecID id = pcm_decoder_id(params->Bits, params->PcmFlags);
+		return id != AV_CODEC_ID_NONE ? avcodec_find_decoder(id) : NULL;
+	}
+	for (ULONG i = 0; i < ARRAY_COUNT(codec_rows); i++)
+		if (codec_rows[i].codec == params->Codec)
+			return codec_rows[i].decoder != NULL ? avcodec_find_decoder_by_name(codec_rows[i].decoder)
+			                                     : avcodec_find_decoder(codec_rows[i].id);
+	return NULL;
 }

@@ -64,6 +64,11 @@ struct ACSession; /* an open decoder; the library's own */
 #define ACC_FLAC 10    /* FLAC; the STREAMINFO as the stream's configuration */
 #define ACC_TrueHD 11  /* Dolby TrueHD */
 #define ACC_PCM 12     /* uncompressed; ACA_Bits and ACA_PcmFlags say how the samples are laid out */
+#define ACC_ADPCM_IMA 13 /* IMA ADPCM as WAVE and AVI hold it; ACA_BlockAlign and the stream's configuration needed */
+#define ACC_ADPCM_MS 14  /* Microsoft ADPCM; ACA_BlockAlign and the stream's configuration (its coefficients) needed */
+#define ACC_ALaw 15      /* G.711 A-law, 8 bits a sample */
+#define ACC_MuLaw 16     /* G.711 mu-law, 8 bits a sample */
+#define ACC_PCM_DVD 17   /* a DVD's LPCM, 16, 20 or 24 bits: each packet says its rate and channels */
 
 /* Errors */
 #define ACERR_NOMEM (-1)       /* out of memory */
@@ -86,7 +91,9 @@ struct ACSession; /* an open decoder; the library's own */
 #define ACA_OutputFormat (ACA_Base + 8)   /* ULONG: ACF_*; ACF_S16 without the tag */
 #define ACA_OutputChannels (ACA_Base + 9) /* ULONG: mix down to 1, 2 or 6 channels when the stream has more; 0 or no tag: as the stream */
 #define ACA_ErrorPtr (ACA_Base + 10)      /* LONG *: gets the ACERR_* when the open fails */
-#define ACA_Backend (ACA_Base + 11)       /* STRPTR: this backend and no other ("ffmpeg" or "ffmpeg.codec") */
+#define ACA_Backend (ACA_Base + 11)       /* STRPTR: this backend and no other ("ffmpegaudio" or "ffmpegaudio.codec") */
+#define ACA_BackendName (ACA_Base + 12)   /* char *, room for AC_BACKEND_NAME_SIZE: gets the file name of the backend the session went to, empty when refused */
+#define ACA_BlockAlign (ACA_Base + 13)    /* ULONG: the bytes of one coded block, as the container says (DMXStream.BlockAlign); ADPCM needs it */
 
 /* How uncompressed samples are laid out (ACA_PcmFlags, DMXStream.PcmFlags) */
 #define ACPCM_BigEndian (1UL << 0) /* the samples' byte order */
@@ -151,7 +158,7 @@ struct ACCodecInfo
 	ULONG Codec;                        /* ACC_* */
 	LONG Priority;                      /* of the backend's rows for one codec the highest gets the session */
 	char Name[AC_CODEC_NAME_SIZE];      /* the codec, for people: "AC-3" */
-	char Backend[AC_BACKEND_NAME_SIZE]; /* the backend's file name: "ffmpeg.codec" */
+	char Backend[AC_BACKEND_NAME_SIZE]; /* the backend's file name: "ffmpegaudio.codec" */
 };
 
 /* Whether a structure of the given Size reaches a field */

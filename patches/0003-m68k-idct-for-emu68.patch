@@ -1,0 +1,1037 @@
+Kinora: IDCTs laid out for Emu68 (docs/architecture.md, section 14.2)
+
+FFmpeg's 8-bit simple IDCT and its Xvid IDCT, bit for bit, in libavcodec/m68k/: a column
+pass per mask of rows that hold coefficients (in 68k assembly for the simple IDCT), whole rows
+for blocks with only column 0, one muls.w a product, clamping by table, and Xvid's clamped
+stores fused into its column pass. ff_idctdsp_init() calls ff_idctdsp_init_m68k() when the
+compiler targets m68k, which replaces the two only where FFmpeg chose them; lowres, other
+depths and other IDCTs keep FFmpeg's. configure drops the arch with --disable-asm (which
+libnix needs: it has no aligned allocations), so Kinora's build runs make with ARCH=m68k to
+take libavcodec/m68k/Makefile in.
+
+diff --git a/libavcodec/idctdsp.c b/libavcodec/idctdsp.c
+--- a/libavcodec/idctdsp.c
++++ b/libavcodec/idctdsp.c
+@@ -307,6 +307,9 @@
+     ff_idctdsp_init_mips(c, avctx, high_bit_depth);
+ #elif ARCH_LOONGARCH
+     ff_idctdsp_init_loongarch(c, avctx, high_bit_depth);
++#endif
++#if defined(__m68k__) /* configure drops the arch with --disable-asm; Kinora's build makes libavcodec/m68k itself */
++    ff_idctdsp_init_m68k(c, avctx, high_bit_depth);
+ #endif
+ 
+     ff_init_scantable_permutation(c->idct_permutation,
+diff --git a/libavcodec/idctdsp.h b/libavcodec/idctdsp.h
+--- a/libavcodec/idctdsp.h
++++ b/libavcodec/idctdsp.h
+@@ -110,5 +110,7 @@
+                           unsigned high_bit_depth);
+ void ff_idctdsp_init_loongarch(IDCTDSPContext *c, struct AVCodecContext *avctx,
+                                unsigned high_bit_depth);
++void ff_idctdsp_init_m68k(IDCTDSPContext *c, struct AVCodecContext *avctx,
++                          unsigned high_bit_depth);
+ 
+ #endif /* AVCODEC_IDCTDSP_H */
+diff --git a/libavcodec/m68k/Makefile b/libavcodec/m68k/Makefile
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/Makefile
+@@ -0,0 +1,4 @@
++OBJS-$(CONFIG_IDCTDSP)                 += m68k/idctdsp_init.o           \
++                                          m68k/simple_idct.o            \
++                                          m68k/simple_idct_columns.o
++OBJS-$(CONFIG_MPEG4_DECODER)           += m68k/xvid_idct.o
+diff --git a/libavcodec/m68k/idct.h b/libavcodec/m68k/idct.h
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/idct.h
+@@ -0,0 +1,107 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * The IDCTs laid out for Emu68 (Kinora's patch 0003): what the files of libavcodec/m68k share.
++ *
++ * Emu68 translates 68k code into ARM code in units, along the path it predicts at each
++ * conditional branch (a short backward branch taken, any other not taken); the other path
++ * leaves the unit, which costs far more than the instructions do.  So these count
++ * instructions and taken forward branches, not cycles: one test a block picks the work, and
++ * the common paths fall through.
++ */
++#ifndef AVCODEC_M68K_IDCT_H
++#define AVCODEC_M68K_IDCT_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++#define M68K_BYTES_x4 0x01010101u /* a byte in each of four lanes */
++#define M68K_LOW7_x4 0x7f7f7f7fu
++#define M68K_HIGH_x4 0x80808080u
++#define M68K_CROP_LOW 32768                          /* the crop table covers int16, plus a pixel */
++#define M68K_CROP_SIZE (M68K_CROP_LOW + 32768 + 256)
++
++typedef uint32_t __attribute__((may_alias)) m68k_word; /* a word of int16s or pixels, as FFmpeg's AV_RN32A */
++
++/*
++ * Clamping by table: ff_m68k_idct_crop[M68K_CROP_LOW + v] is v held to 0..255.  Every index the
++ * IDCTs make is inside it: a simple IDCT result is a 32-bit sum shifted right by 20 (within
++ * +-2048), an Xvid one an int16, and a pixel adds at most 255.  One indexed load replaces a
++ * compare, a set and an out-of-line branch per pixel.  simple_idct_columns.S reads it too.
++ */
++extern uint8_t ff_m68k_idct_crop[M68K_CROP_SIZE];
++#define M68K_CROP (ff_m68k_idct_crop + M68K_CROP_LOW)
++
++/**
++ * M68K_MUL16() - A 16x16 -> 32 signed product, as the C (unsigned)w * x gives its bits.
++ * @x: an int16 value (a coefficient or a row result)
++ * @w: a constant, or any value that fits in 16 bits
++ *
++ * gcc's m68k backend turns many constant products into shift-and-add chains of 10 to 20
++ * instructions, each translated by Emu68 on its own; one muls.w is a few ARM instructions.
++ *
++ * Return: the product, unsigned so that sums wrap as FFmpeg's do.
++ */
++#define M68K_MUL16(x, w) __extension__({                                \
++	int product_ = (x);                                             \
++	__asm__("muls.w %1,%0" : "+d"(product_) : "dmi"((int16_t)(w))); \
++	(uint32_t)product_;                                             \
++})
++
++/**
++ * m68k_add_saturate4() - Add one value to four pixels in a word, each held to 0..255.
++ * @pixels: four pixels
++ * @value:  what to add to each
++ *
++ * SWAR: the lanes' carries (or borrows) are found from their top bits and turned into
++ * all-ones (all-zero) lanes, so no lane spills into the next.
++ *
++ * Return: the four sums.
++ */
++static inline __attribute__((always_inline)) uint32_t m68k_add_saturate4(uint32_t pixels, int value)
++{
++	if (value >= 0)
++	{
++		uint32_t add = (uint32_t)(value > 255 ? 255 : value) * M68K_BYTES_x4;
++		uint32_t sum = ((pixels & M68K_LOW7_x4) + (add & M68K_LOW7_x4)) ^ ((pixels ^ add) & M68K_HIGH_x4);
++		uint32_t carry = ((pixels & add) | ((pixels | add) & ~sum)) & M68K_HIGH_x4;
++		return sum | ((carry >> 7) * 0xffu);
++	}
++	uint32_t sub = (uint32_t)(value < -255 ? 255 : -value) * M68K_BYTES_x4;
++	uint32_t difference = ((pixels | M68K_HIGH_x4) - (sub & M68K_LOW7_x4)) ^ ((pixels ^ ~sub) & M68K_HIGH_x4);
++	uint32_t borrow = ((~pixels & sub) | (~(pixels ^ sub) & difference)) & M68K_HIGH_x4;
++	return difference & ~((borrow >> 7) * 0xffu);
++}
++
++/**
++ * m68k_rows_store() - Eight rows of eight pixels, each row one value: stored, or added with saturation.
++ * @dest: the pixels (4-byte aligned, as FFmpeg's frames are)
++ * @ls:   their stride
++ * @out:  each row's value, before clamping
++ * @add:  add (1) or replace (0) (a constant in every caller)
++ */
++static inline __attribute__((always_inline)) void m68k_rows_store(uint8_t *dest, ptrdiff_t ls, const int out[8], const int add)
++{
++	for (int y = 0; y < 8; y++, dest += ls)
++	{
++		m68k_word *word = (m68k_word *)dest;
++		if (add)
++		{
++			word[0] = m68k_add_saturate4(word[0], out[y]);
++			word[1] = m68k_add_saturate4(word[1], out[y]);
++		}
++		else
++		{
++			uint32_t value = (uint32_t)M68K_CROP[out[y]] * M68K_BYTES_x4;
++			word[0] = value;
++			word[1] = value;
++		}
++	}
++}
++
++void ff_m68k_simple_idct_init(void);
++void ff_m68k_simple_idct_put(uint8_t *dest, ptrdiff_t ls, int16_t *block);
++void ff_m68k_simple_idct_add(uint8_t *dest, ptrdiff_t ls, int16_t *block);
++void ff_m68k_xvid_idct_put(uint8_t *dest, ptrdiff_t ls, int16_t *block);
++void ff_m68k_xvid_idct_add(uint8_t *dest, ptrdiff_t ls, int16_t *block);
++
++#endif
+diff --git a/libavcodec/m68k/idctdsp_init.c b/libavcodec/m68k/idctdsp_init.c
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/idctdsp_init.c
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * The IDCTs laid out for Emu68 (idct.h), chosen where FFmpeg chose exactly the ones they are
++ * bit for bit: its 8-bit simple IDCT and its Xvid IDCT.  Lowres, other bit depths and other
++ * IDCTs keep FFmpeg's functions; the permutation stays FFmpeg's in every case.
++ */
++#include "config_components.h"
++#include "libavutil/attributes.h"
++#include "libavutil/thread.h"
++#include "libavcodec/avcodec.h"
++#include "libavcodec/idctdsp.h"
++#include "libavcodec/simple_idct.h"
++#include "libavcodec/xvididct.h"
++#include "idct.h"
++
++/**
++ * ff_idctdsp_init_m68k() - Put the Emu68 IDCTs in where FFmpeg chose their equals.
++ * @c:              the IDCT functions, FFmpeg's choice made
++ * @avctx:          the decoder
++ * @high_bit_depth: more than 8 bits a sample
++ */
++av_cold void ff_idctdsp_init_m68k(IDCTDSPContext *c, AVCodecContext *avctx, unsigned high_bit_depth)
++{
++	static AVOnce tables = AV_ONCE_INIT;
++
++	if (high_bit_depth || avctx->lowres != 0 || c->perm_type != FF_IDCT_PERM_NONE)
++		return;
++	ff_thread_once(&tables, ff_m68k_simple_idct_init);
++	if (c->idct_put == ff_simple_idct_put_int16_8bit && c->idct_add == ff_simple_idct_add_int16_8bit)
++	{
++		c->idct_put = ff_m68k_simple_idct_put;
++		c->idct_add = ff_m68k_simple_idct_add;
++	}
++#if CONFIG_MPEG4_DECODER
++	else if (c->idct == ff_xvid_idct)
++	{
++		c->idct_put = ff_m68k_xvid_idct_put;
++		c->idct_add = ff_m68k_xvid_idct_add;
++	}
++#endif
++}
+diff --git a/libavcodec/m68k/simple_idct.c b/libavcodec/m68k/simple_idct.c
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/simple_idct.c
+@@ -0,0 +1,318 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * FFmpeg's 8-bit simple IDCT (libavcodec/simple_idct_template.c), laid out for Emu68.
++ *
++ * Bit-exact with ff_simple_idct_put_int16_8bit() and ff_simple_idct_add_int16_8bit(): the
++ * same products, sums and shifts, with the terms that are zero for a block left out.
++ * FFmpeg's column pass tests rows 4 to 7 once a column; here one test a block picks the work:
++ *
++ * - the rows that hold coefficients make a mask, and a column pass is made for each of a few
++ *   masks (rows 0, 0-1, 0-2, 0-3, the same with row 7, which MPEG-2's mismatch control fills
++ *   in half its blocks, and all rows), in 68k (simple_idct_columns.S); a table maps any mask
++ *   to the smallest pass that covers it;
++ * - a block whose coefficients are all in column 0 has eight equal columns after the row
++ *   pass: one column transform, then whole rows are stored, or added four pixels at a time.
++ *
++ * The row pass is FFmpeg's: a row with only row[0] set becomes (row[0] * 8) & 0xffff in all
++ * eight places, any other row takes the full transform.
++ */
++#include <stddef.h>
++#include <stdint.h>
++
++#include "libavutil/attributes.h"
++#include "idct.h"
++
++#define W1 22725
++#define W2 21407
++#define W3 19266
++#define W4 16383
++#define W5 12873
++#define W6 8867
++#define W7 4520
++#define ROW_SHIFT 11
++#define COL_SHIFT 20
++#define DC_SHIFT 3
++#define COL_BIAS ((1 << (COL_SHIFT - 1)) / W4) /* FFmpeg folds the column rounding into row 0 */
++#define ROW_MASK 0xffu
++#define SHAPE_COLUMN0 0x100u                   /* with the row mask: every coefficient is in column 0 */
++
++uint8_t ff_m68k_idct_crop[M68K_CROP_SIZE];
++
++/**
++ * row_transform() - FFmpeg's full row transform, for a row with more than row[0].
++ * @row:  the eight coefficients, replaced by the row's results
++ * @high: row[4..7] hold something
++ */
++static inline __attribute__((always_inline)) void row_transform(int16_t *row, int high)
++{
++	uint32_t a0 = M68K_MUL16(row[0], W4) + (1 << (ROW_SHIFT - 1));
++	uint32_t a1 = a0, a2 = a0, a3 = a0;
++	a0 += M68K_MUL16(row[2], W2);
++	a1 += M68K_MUL16(row[2], W6);
++	a2 -= M68K_MUL16(row[2], W6);
++	a3 -= M68K_MUL16(row[2], W2);
++	uint32_t b0 = M68K_MUL16(row[1], W1) + M68K_MUL16(row[3], W3);
++	uint32_t b1 = M68K_MUL16(row[1], W3) - M68K_MUL16(row[3], W7);
++	uint32_t b2 = M68K_MUL16(row[1], W5) - M68K_MUL16(row[3], W1);
++	uint32_t b3 = M68K_MUL16(row[1], W7) - M68K_MUL16(row[3], W5);
++	if (high)
++	{
++		a0 += M68K_MUL16(row[4], W4) + M68K_MUL16(row[6], W6);
++		a1 += -M68K_MUL16(row[4], W4) - M68K_MUL16(row[6], W2);
++		a2 += -M68K_MUL16(row[4], W4) + M68K_MUL16(row[6], W2);
++		a3 += M68K_MUL16(row[4], W4) - M68K_MUL16(row[6], W6);
++		b0 += M68K_MUL16(row[5], W5) + M68K_MUL16(row[7], W7);
++		b1 += -M68K_MUL16(row[5], W1) - M68K_MUL16(row[7], W5);
++		b2 += M68K_MUL16(row[5], W7) + M68K_MUL16(row[7], W3);
++		b3 += M68K_MUL16(row[5], W3) - M68K_MUL16(row[7], W1);
++	}
++	row[0] = (int16_t)((int)(a0 + b0) >> ROW_SHIFT);
++	row[7] = (int16_t)((int)(a0 - b0) >> ROW_SHIFT);
++	row[1] = (int16_t)((int)(a1 + b1) >> ROW_SHIFT);
++	row[6] = (int16_t)((int)(a1 - b1) >> ROW_SHIFT);
++	row[2] = (int16_t)((int)(a2 + b2) >> ROW_SHIFT);
++	row[5] = (int16_t)((int)(a2 - b2) >> ROW_SHIFT);
++	row[3] = (int16_t)((int)(a3 + b3) >> ROW_SHIFT);
++	row[4] = (int16_t)((int)(a3 - b3) >> ROW_SHIFT);
++}
++
++/**
++ * rows_transform() - The row pass, as FFmpeg does it, and the rows that hold something.
++ * @block: the 64 coefficients, replaced by the rows' results
++ *
++ * Return: a bit per row that held a coefficient, with SHAPE_COLUMN0 when only row[0]s did.
++ */
++static inline __attribute__((always_inline)) unsigned rows_transform(int16_t *block)
++{
++	unsigned rows = 0;
++	unsigned beyond_column0 = 0;
++
++#pragma GCC unroll 8
++	for (int r = 0; r < 8; r++)
++	{
++		int16_t *row = block + 8 * r;
++		const m68k_word *word = (const m68k_word *)row;
++		uint32_t rest = (uint16_t)row[1] | word[1] | word[2] | word[3]; /* row[1..7] */
++		if (rest == 0)
++		{
++			if (row[0] == 0)
++				continue;
++			uint32_t value = ((uint32_t)row[0] << DC_SHIFT) & 0xffffu;
++			value |= value << 16;
++			m68k_word *out = (m68k_word *)row;
++			out[0] = value;
++			out[1] = value;
++			out[2] = value;
++			out[3] = value;
++			rows |= 1u << r;
++			continue;
++		}
++		row_transform(row, (word[2] | word[3]) != 0);
++		rows |= 1u << r;
++		beyond_column0 = 1;
++	}
++	return beyond_column0 ? rows : rows | SHAPE_COLUMN0;
++}
++
++/**
++ * column_transform() - FFmpeg's column transform for one column, rows not in @rows left out.
++ * @col:  the column (stride 8)
++ * @rows: the rows that may hold something (a constant in every caller)
++ * @out:  the eight results, before clamping
++ */
++static inline __attribute__((always_inline)) void column_transform(const int16_t *col, const unsigned rows, int out[8])
++{
++	uint32_t a0 = (uint32_t)W4 * (uint32_t)(col[8 * 0] + COL_BIAS);
++	uint32_t a1 = a0, a2 = a0, a3 = a0;
++	uint32_t b0 = 0, b1 = 0, b2 = 0, b3 = 0;
++
++	if (rows & 0x04)
++	{
++		a0 += M68K_MUL16(col[8 * 2], W2);
++		a1 += M68K_MUL16(col[8 * 2], W6);
++		a2 -= M68K_MUL16(col[8 * 2], W6);
++		a3 -= M68K_MUL16(col[8 * 2], W2);
++	}
++	if (rows & 0x02)
++	{
++		b0 += M68K_MUL16(col[8 * 1], W1);
++		b1 += M68K_MUL16(col[8 * 1], W3);
++		b2 += M68K_MUL16(col[8 * 1], W5);
++		b3 += M68K_MUL16(col[8 * 1], W7);
++	}
++	if (rows & 0x08)
++	{
++		b0 += M68K_MUL16(col[8 * 3], W3);
++		b1 -= M68K_MUL16(col[8 * 3], W7);
++		b2 -= M68K_MUL16(col[8 * 3], W1);
++		b3 -= M68K_MUL16(col[8 * 3], W5);
++	}
++	if (rows & 0x10)
++	{
++		a0 += M68K_MUL16(col[8 * 4], W4);
++		a1 -= M68K_MUL16(col[8 * 4], W4);
++		a2 -= M68K_MUL16(col[8 * 4], W4);
++		a3 += M68K_MUL16(col[8 * 4], W4);
++	}
++	if (rows & 0x20)
++	{
++		b0 += M68K_MUL16(col[8 * 5], W5);
++		b1 -= M68K_MUL16(col[8 * 5], W1);
++		b2 += M68K_MUL16(col[8 * 5], W7);
++		b3 += M68K_MUL16(col[8 * 5], W3);
++	}
++	if (rows & 0x40)
++	{
++		a0 += M68K_MUL16(col[8 * 6], W6);
++		a1 -= M68K_MUL16(col[8 * 6], W2);
++		a2 += M68K_MUL16(col[8 * 6], W2);
++		a3 -= M68K_MUL16(col[8 * 6], W6);
++	}
++	if (rows & 0x80)
++	{
++		b0 += M68K_MUL16(col[8 * 7], W7);
++		b1 -= M68K_MUL16(col[8 * 7], W5);
++		b2 += M68K_MUL16(col[8 * 7], W3);
++		b3 -= M68K_MUL16(col[8 * 7], W1);
++	}
++	out[0] = (int)(a0 + b0) >> COL_SHIFT;
++	out[1] = (int)(a1 + b1) >> COL_SHIFT;
++	out[2] = (int)(a2 + b2) >> COL_SHIFT;
++	out[3] = (int)(a3 + b3) >> COL_SHIFT;
++	out[4] = (int)(a3 - b3) >> COL_SHIFT;
++	out[5] = (int)(a2 - b2) >> COL_SHIFT;
++	out[6] = (int)(a1 - b1) >> COL_SHIFT;
++	out[7] = (int)(a0 - b0) >> COL_SHIFT;
++}
++
++/**
++ * column0_store() - A block whose coefficients are all in column 0: eight equal columns.
++ * @dest:  the 8x8 pixels (4-byte aligned, as FFmpeg's frames are)
++ * @ls:    their stride
++ * @block: the row pass's results
++ * @rows:  the rows that hold something
++ * @add:   add to the pixels (1) or replace them (0)
++ */
++static inline __attribute__((always_inline)) void column0_store(uint8_t *dest, ptrdiff_t ls, const int16_t *block,
++                                                                unsigned rows, const int add)
++{
++	int out[8];
++	if ((rows & ~0x01u) == 0)
++		column_transform(block, 0x01, out);
++	else if ((rows & ~0x03u) == 0)
++		column_transform(block, 0x03, out);
++	else
++		column_transform(block, 0xff, out);
++	m68k_rows_store(dest, ls, out, add);
++}
++
++/* the column passes made: rows 0, 0-1, 0-2, 0-3, 0+7, 0-1+7, 0-2+7, 0-3+7, all */
++enum column_pass
++{
++	PASS_0,
++	PASS_01,
++	PASS_012,
++	PASS_0123,
++	PASS_07,
++	PASS_017,
++	PASS_0127,
++	PASS_01237,
++	PASS_ALL,
++	PASS_COUNT
++};
++
++static const uint8_t pass_rows[PASS_COUNT] = {0x01, 0x03, 0x07, 0x0f, 0x81, 0x83, 0x87, 0x8f, 0xff};
++static uint8_t pass_for_rows[256]; /* the smallest pass that covers each mask */
++
++/* the passes in 68k (simple_idct_columns.S), one a mask, in pass_rows[] order */
++typedef void (*columns_function)(uint8_t *dest, ptrdiff_t ls, const int16_t *block);
++#define COLUMNS_DECLARE(mask)                                                                \
++	void ff_m68k_columns_put_##mask(uint8_t *dest, ptrdiff_t ls, const int16_t *block); \
++	void ff_m68k_columns_add_##mask(uint8_t *dest, ptrdiff_t ls, const int16_t *block);
++COLUMNS_DECLARE(01)
++COLUMNS_DECLARE(03)
++COLUMNS_DECLARE(07)
++COLUMNS_DECLARE(0f)
++COLUMNS_DECLARE(81)
++COLUMNS_DECLARE(83)
++COLUMNS_DECLARE(87)
++COLUMNS_DECLARE(8f)
++COLUMNS_DECLARE(ff)
++static const columns_function columns_pass[2][PASS_COUNT] = {
++    {ff_m68k_columns_put_01, ff_m68k_columns_put_03, ff_m68k_columns_put_07, ff_m68k_columns_put_0f, ff_m68k_columns_put_81,
++     ff_m68k_columns_put_83, ff_m68k_columns_put_87, ff_m68k_columns_put_8f, ff_m68k_columns_put_ff},
++    {ff_m68k_columns_add_01, ff_m68k_columns_add_03, ff_m68k_columns_add_07, ff_m68k_columns_add_0f, ff_m68k_columns_add_81,
++     ff_m68k_columns_add_83, ff_m68k_columns_add_87, ff_m68k_columns_add_8f, ff_m68k_columns_add_ff},
++};
++
++/**
++ * pass_table_fill() - Map every mask of rows to the smallest column pass that covers it.
++ */
++static av_cold void pass_table_fill(void)
++{
++	for (unsigned mask = 0; mask < 256; mask++)
++	{
++		unsigned best = PASS_ALL;
++		for (unsigned pass = 0; pass < PASS_COUNT; pass++)
++			if ((mask & ~(unsigned)pass_rows[pass]) == 0 &&
++			    __builtin_popcount(pass_rows[pass]) < __builtin_popcount(pass_rows[best]))
++				best = pass;
++		pass_for_rows[mask] = (uint8_t)best;
++	}
++}
++
++/**
++ * crop_table_fill() - Fill the clamping table.
++ */
++static av_cold void crop_table_fill(void)
++{
++	for (int i = 0; i < M68K_CROP_SIZE; i++)
++	{
++		const int value = i - M68K_CROP_LOW;
++		ff_m68k_idct_crop[i] = (uint8_t)(value < 0 ? 0 : value > 255 ? 255 : value);
++	}
++}
++
++/**
++ * ff_m68k_simple_idct_init() - Fill the tables (column passes, clamping): once, before any IDCT here.
++ */
++av_cold void ff_m68k_simple_idct_init(void)
++{
++	pass_table_fill();
++	crop_table_fill();
++}
++
++/**
++ * ff_m68k_simple_idct_put() - ff_simple_idct_put_int16_8bit(), bit for bit.
++ * @dest:  the 8x8 pixels to replace
++ * @ls:    their stride
++ * @block: the coefficients (overwritten)
++ */
++void ff_m68k_simple_idct_put(uint8_t *dest, ptrdiff_t ls, int16_t *block)
++{
++	unsigned rows = rows_transform(block);
++	if (rows & SHAPE_COLUMN0)
++	{
++		column0_store(dest, ls, block, rows & ROW_MASK, 0);
++		return;
++	}
++	columns_pass[0][pass_for_rows[rows & ROW_MASK]](dest, ls, block);
++}
++
++/**
++ * ff_m68k_simple_idct_add() - ff_simple_idct_add_int16_8bit(), bit for bit.
++ * @dest:  the 8x8 pixels to add to
++ * @ls:    their stride
++ * @block: the coefficients (overwritten)
++ */
++void ff_m68k_simple_idct_add(uint8_t *dest, ptrdiff_t ls, int16_t *block)
++{
++	unsigned rows = rows_transform(block);
++	if (rows & SHAPE_COLUMN0)
++	{
++		if ((rows & ROW_MASK) != 0)
++			column0_store(dest, ls, block, rows & ROW_MASK, 1);
++		return;
++	}
++	columns_pass[1][pass_for_rows[rows & ROW_MASK]](dest, ls, block);
++}
+diff --git a/libavcodec/m68k/simple_idct_columns.S b/libavcodec/m68k/simple_idct_columns.S
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/simple_idct_columns.S
+@@ -0,0 +1,195 @@
++| SPDX-License-Identifier: LGPL-2.1-or-later
++|
++| The column passes of the simple IDCT in 68k (simple_idct.c): column_transform() and
++| a store of each column for each mask of rows, bit for bit.
++|
++| gcc gives these 8 to 10 instructions a pixel: it reloads the shift count before every shift,
++| clears the pixel register before every load and keeps three of its eight row pointers on the
++| stack. Here a pixel takes 7 (add) or 5 (put): the shift count (20) and a pixel register with
++| its upper 24 bits clear are set once, the pixel pointer steps down a column, the even
++| results of the column live in a register (only row 0) or in four stack slots.
++|
++|   void ff_m68k_columns_<add|put>_<mask>(uint8_t *dest, ptrdiff_t ls, const int16_t *block)
++|
++| Registers: d0-d3 the odd sums b0..b3; d4, d5 scratch (d4 the even sum when only row 0 holds
++| one); d6 a pixel, upper bits clear; d7 20; a0 the column; a1 the pixel; a2 the stride; a3
++| the zero of the crop table; a4 the first pixel of the column; a5 the end of the row.
++|
++| The arithmetic is that of FFmpeg (libavcodec/simple_idct_template.c, IDCT_COLS): products of
++| int16 values by muls.w, sums modulo 2^32, an arithmetic shift by 20, a clamp by table.
++
++	.text
++
++W1 = 22725
++W2 = 21407
++W3 = 19266
++W4 = 16383
++W5 = 12873
++W6 = 8867
++W7 = 4520
++COL_BIAS = 32			| (1 << 19) / W4: the rounding FFmpeg folds into row 0
++SLOTS = 16			| the even sums a0..a3, when rows 2, 4 or 6 hold something
++SAVED = 44			| d2-d7/a2-a6
++ARGS = SLOTS + SAVED + 4	| past the return address
++
++| ODD offset, w0, w1, w2, w3: the four products of one odd row into b0..b3
++	.macro	ODD offset, w0, w1, w2, w3
++	.if	odd_set
++	move.w	\offset(a0),d4
++	move.w	d4,d5
++	muls.w	#\w0,d5
++	add.l	d5,d0
++	move.w	d4,d5
++	muls.w	#\w1,d5
++	add.l	d5,d1
++	move.w	d4,d5
++	muls.w	#\w2,d5
++	add.l	d5,d2
++	muls.w	#\w3,d4
++	add.l	d4,d3
++	.else
++	move.w	\offset(a0),d0
++	move.w	d0,d1
++	move.w	d0,d2
++	move.w	d0,d3
++	muls.w	#\w0,d0
++	muls.w	#\w1,d1
++	muls.w	#\w2,d2
++	muls.w	#\w3,d3
++odd_set = 1
++	.endif
++	.endm
++
++| PIXEL even, op, odd, add, last: one result to its pixel
++	.macro	PIXEL even, op, odd, add, last
++	move.l	\even,d5
++	.if	odd_set
++	\op\().l	\odd,d5
++	.endif
++	asr.l	d7,d5
++	.if	\add
++	move.b	(a1),d6
++	add.l	d6,d5
++	.endif
++	move.b	0(a3,d5.l),(a1)
++	.if	\last == 0
++	adda.l	a2,a1
++	.endif
++	.endm
++
++| COLUMNS name, rows, add: the column pass over eight columns for one mask of rows
++	.macro	COLUMNS name, rows, add
++	.globl	_\name
++_\name:
++	movem.l	d2-d7/a2-a6,-(sp)
++	lea	-SLOTS(sp),sp
++	move.l	ARGS(sp),a4
++	move.l	ARGS+4(sp),a2
++	move.l	ARGS+8(sp),a0
++	lea	16(a0),a5
++	lea	_ff_m68k_idct_crop+32768,a3
++	moveq	#20,d7
++	moveq	#0,d6
++1:
++odd_set = 0
++	.if	(\rows) & 0x02
++	ODD	16, W1, W3, W5, W7
++	.endif
++	.if	(\rows) & 0x08
++	ODD	48, W3, -W7, -W1, -W5
++	.endif
++	.if	(\rows) & 0x20
++	ODD	80, W5, -W1, W7, W3
++	.endif
++	.if	(\rows) & 0x80
++	ODD	112, W7, -W5, W3, -W1
++	.endif
++	| W4 * (row 0 + COL_BIAS) = (x << 14) - x
++	move.w	(a0),d5
++	ext.l	d5
++	add.l	#COL_BIAS,d5
++	move.l	d5,d4
++	lsl.l	#8,d4
++	lsl.l	#6,d4
++	sub.l	d5,d4
++	.if	(\rows) & 0x54
++	| a0 = a3 = base + W4 row4, a1 = a2 = base - W4 row4, then rows 2 and 6
++	move.l	d4,d5
++	.if	(\rows) & 0x10
++	move.w	64(a0),d6
++	muls.w	#W4,d6
++	add.l	d6,d4
++	sub.l	d6,d5
++	moveq	#0,d6
++	.endif
++	move.l	d4,(sp)
++	move.l	d5,4(sp)
++	move.l	d5,8(sp)
++	move.l	d4,12(sp)
++	.if	(\rows) & 0x04
++	move.w	32(a0),d4
++	move.w	d4,d5
++	muls.w	#W2,d4
++	muls.w	#W6,d5
++	add.l	d4,(sp)
++	add.l	d5,4(sp)
++	sub.l	d5,8(sp)
++	sub.l	d4,12(sp)
++	.endif
++	.if	(\rows) & 0x40
++	move.w	96(a0),d4
++	move.w	d4,d5
++	muls.w	#W6,d4
++	muls.w	#W2,d5
++	add.l	d4,(sp)
++	sub.l	d5,4(sp)
++	add.l	d5,8(sp)
++	sub.l	d4,12(sp)
++	.endif
++	move.l	a4,a1
++	PIXEL	(sp), add, d0, \add, 0
++	PIXEL	4(sp), add, d1, \add, 0
++	PIXEL	8(sp), add, d2, \add, 0
++	PIXEL	12(sp), add, d3, \add, 0
++	PIXEL	12(sp), sub, d3, \add, 0
++	PIXEL	8(sp), sub, d2, \add, 0
++	PIXEL	4(sp), sub, d1, \add, 0
++	PIXEL	(sp), sub, d0, \add, 1
++	.else
++	move.l	a4,a1
++	PIXEL	d4, add, d0, \add, 0
++	PIXEL	d4, add, d1, \add, 0
++	PIXEL	d4, add, d2, \add, 0
++	PIXEL	d4, add, d3, \add, 0
++	PIXEL	d4, sub, d3, \add, 0
++	PIXEL	d4, sub, d2, \add, 0
++	PIXEL	d4, sub, d1, \add, 0
++	PIXEL	d4, sub, d0, \add, 1
++	.endif
++	addq.l	#2,a0
++	addq.l	#1,a4
++	cmpa.l	a5,a0
++	bne	1b
++	lea	SLOTS(sp),sp
++	movem.l	(sp)+,d2-d7/a2-a6
++	rts
++	.endm
++
++	COLUMNS	ff_m68k_columns_put_01, 0x01, 0
++	COLUMNS	ff_m68k_columns_put_03, 0x03, 0
++	COLUMNS	ff_m68k_columns_put_07, 0x07, 0
++	COLUMNS	ff_m68k_columns_put_0f, 0x0f, 0
++	COLUMNS	ff_m68k_columns_put_81, 0x81, 0
++	COLUMNS	ff_m68k_columns_put_83, 0x83, 0
++	COLUMNS	ff_m68k_columns_put_87, 0x87, 0
++	COLUMNS	ff_m68k_columns_put_8f, 0x8f, 0
++	COLUMNS	ff_m68k_columns_put_ff, 0xff, 0
++	COLUMNS	ff_m68k_columns_add_01, 0x01, 1
++	COLUMNS	ff_m68k_columns_add_03, 0x03, 1
++	COLUMNS	ff_m68k_columns_add_07, 0x07, 1
++	COLUMNS	ff_m68k_columns_add_0f, 0x0f, 1
++	COLUMNS	ff_m68k_columns_add_81, 0x81, 1
++	COLUMNS	ff_m68k_columns_add_83, 0x83, 1
++	COLUMNS	ff_m68k_columns_add_87, 0x87, 1
++	COLUMNS	ff_m68k_columns_add_8f, 0x8f, 1
++	COLUMNS	ff_m68k_columns_add_ff, 0xff, 1
+diff --git a/libavcodec/m68k/xvid_idct.c b/libavcodec/m68k/xvid_idct.c
+new file mode 100644
+--- /dev/null
++++ b/libavcodec/m68k/xvid_idct.c
+@@ -0,0 +1,307 @@
++/* SPDX-License-Identifier: LGPL-2.1-or-later */
++/*
++ * FFmpeg's Xvid IDCT (libavcodec/xvididct.c), laid out for Emu68 and fused with its clamped
++ * stores.
++ *
++ * FFmpeg runs ff_xvid_idct() into the block, then ff_put_pixels_clamped_c() or
++ * ff_add_pixels_clamped_c() over it: here each column's results go straight to the pixels,
++ * cut to int16 first exactly as the block would hold them.  The row pass and the choice of
++ * column transform (rows 4-7, row 3, or rows 0-2 only) are FFmpeg's.  A block whose
++ * coefficients are all in column 0 has constant rows after the row pass (a zero row 1 or 2
++ * becomes all 1, row 0 always carries the rounding): one column transform, then whole rows.
++ */
++#include <stddef.h>
++#include <stdint.h>
++
++#include "idct.h"
++
++#define XVID_ROW_SHIFT 11
++#define XVID_COL_SHIFT 6
++#define XVID_RND0 65536
++#define XVID_RND1 3597
++#define XVID_RND2 2260
++#define XVID_RND3 1203
++#define XVID_RND4 0
++#define XVID_RND5 120
++#define XVID_RND6 512
++#define XVID_RND7 512
++#define XVID_TAN1 0x32EC
++#define XVID_TAN2 0x6A0A
++#define XVID_TAN3 0xAB0E
++#define XVID_SQRT2 0x5A82
++#define XVID_MULT(c, x, n) ((unsigned)((int)((c) * (unsigned)(x)) >> (n)))
++
++static const int XVID_TAB04[] = { 22725, 21407, 19266, 16384, 12873, 8867, 4520 };
++static const int XVID_TAB17[] = { 31521, 29692, 26722, 22725, 17855, 12299, 6270 };
++static const int XVID_TAB26[] = { 29692, 27969, 25172, 21407, 16819, 11585, 5906 };
++static const int XVID_TAB35[] = { 26722, 25172, 22654, 19266, 15137, 10426, 5315 };
++
++/**
++ * xvid_row() - FFmpeg's idct_row(), word for word.
++ * @in:  the row
++ * @tab: its constants
++ * @rnd: its rounding
++ *
++ * Return: 0 when the row stays all zero, 1 otherwise.
++ */
++static inline __attribute__((always_inline)) int xvid_row(short *in, const int *const tab, int rnd)
++{
++	const unsigned c1 = tab[0];
++	const unsigned c2 = tab[1];
++	const unsigned c3 = tab[2];
++	const unsigned c4 = tab[3];
++	const unsigned c5 = tab[4];
++	const unsigned c6 = tab[5];
++	const unsigned c7 = tab[6];
++
++	const int right = in[5] | in[6] | in[7];
++	const int left = in[1] | in[2] | in[3];
++	if (!(right | in[4]))
++	{
++		const int k = M68K_MUL16(in[0], c4) + rnd;
++		if (left)
++		{
++			const unsigned a0 = k + M68K_MUL16(in[2], c2);
++			const unsigned a1 = k + M68K_MUL16(in[2], c6);
++			const unsigned a2 = k - M68K_MUL16(in[2], c6);
++			const unsigned a3 = k - M68K_MUL16(in[2], c2);
++			const int b0 = M68K_MUL16(in[1], c1) + M68K_MUL16(in[3], c3);
++			const int b1 = M68K_MUL16(in[1], c3) - M68K_MUL16(in[3], c7);
++			const int b2 = M68K_MUL16(in[1], c5) - M68K_MUL16(in[3], c1);
++			const int b3 = M68K_MUL16(in[1], c7) - M68K_MUL16(in[3], c5);
++			in[0] = (int)(a0 + b0) >> XVID_ROW_SHIFT;
++			in[1] = (int)(a1 + b1) >> XVID_ROW_SHIFT;
++			in[2] = (int)(a2 + b2) >> XVID_ROW_SHIFT;
++			in[3] = (int)(a3 + b3) >> XVID_ROW_SHIFT;
++			in[4] = (int)(a3 - b3) >> XVID_ROW_SHIFT;
++			in[5] = (int)(a2 - b2) >> XVID_ROW_SHIFT;
++			in[6] = (int)(a1 - b1) >> XVID_ROW_SHIFT;
++			in[7] = (int)(a0 - b0) >> XVID_ROW_SHIFT;
++		}
++		else
++		{
++			const int a0 = k >> XVID_ROW_SHIFT;
++			if (!a0)
++			{
++				return 0;
++			}
++			in[0] = in[1] = in[2] = in[3] = in[4] = in[5] = in[6] = in[7] = a0;
++		}
++	}
++	else if (!(left | right))
++	{
++		const int a0 = (int)(rnd + c4 * (in[0] + in[4])) >> XVID_ROW_SHIFT;
++		const int a1 = (int)(rnd + c4 * (in[0] - in[4])) >> XVID_ROW_SHIFT;
++		in[0] = a0;
++		in[3] = a0;
++		in[4] = a0;
++		in[7] = a0;
++		in[1] = a1;
++		in[2] = a1;
++		in[5] = a1;
++		in[6] = a1;
++	}
++	else
++	{
++		const unsigned int k = M68K_MUL16(in[0], c4) + rnd;
++		const unsigned int a0 = k + M68K_MUL16(in[2], c2) + M68K_MUL16(in[4], c4) + M68K_MUL16(in[6], c6);
++		const unsigned int a1 = k + M68K_MUL16(in[2], c6) - M68K_MUL16(in[4], c4) - M68K_MUL16(in[6], c2);
++		const unsigned int a2 = k - M68K_MUL16(in[2], c6) - M68K_MUL16(in[4], c4) + M68K_MUL16(in[6], c2);
++		const unsigned int a3 = k - M68K_MUL16(in[2], c2) + M68K_MUL16(in[4], c4) - M68K_MUL16(in[6], c6);
++		const unsigned int b0 = M68K_MUL16(in[1], c1) + M68K_MUL16(in[3], c3) + M68K_MUL16(in[5], c5) + M68K_MUL16(in[7], c7);
++		const unsigned int b1 = M68K_MUL16(in[1], c3) - M68K_MUL16(in[3], c7) - M68K_MUL16(in[5], c1) - M68K_MUL16(in[7], c5);
++		const unsigned int b2 = M68K_MUL16(in[1], c5) - M68K_MUL16(in[3], c1) + M68K_MUL16(in[5], c7) + M68K_MUL16(in[7], c3);
++		const unsigned int b3 = M68K_MUL16(in[1], c7) - M68K_MUL16(in[3], c5) + M68K_MUL16(in[5], c3) - M68K_MUL16(in[7], c1);
++		in[0] = (int)(a0 + b0) >> XVID_ROW_SHIFT;
++		in[1] = (int)(a1 + b1) >> XVID_ROW_SHIFT;
++		in[2] = (int)(a2 + b2) >> XVID_ROW_SHIFT;
++		in[3] = (int)(a3 + b3) >> XVID_ROW_SHIFT;
++		in[4] = (int)(a3 - b3) >> XVID_ROW_SHIFT;
++		in[5] = (int)(a2 - b2) >> XVID_ROW_SHIFT;
++		in[6] = (int)(a1 - b1) >> XVID_ROW_SHIFT;
++		in[7] = (int)(a0 - b0) >> XVID_ROW_SHIFT;
++	}
++	return 1;
++}
++
++/* the column transforms: FFmpeg's idct_col_8/4/3, results to out[] as the block would hold them */
++enum xvid_columns
++{
++	XVID_COLUMNS_3, /* rows 0-2 */
++	XVID_COLUMNS_4, /* rows 0-3 */
++	XVID_COLUMNS_8, /* any of rows 4-7 */
++};
++
++/**
++ * xvid_column() - One column of FFmpeg's Xvid column pass.
++ * @in:    the column (stride 8)
++ * @which: XVID_COLUMNS_3, _4 or _8 (a constant in every caller)
++ * @out:   the eight results, cut to int16 as FFmpeg's block holds them
++ */
++static inline __attribute__((always_inline)) void xvid_column(const short *in, const int which, int out[8])
++{
++	int mm0, mm1, mm2, mm3, mm4, mm5, mm6, mm7, spill;
++
++	if (which == XVID_COLUMNS_8)
++	{
++		mm4 = (int)in[7 * 8];
++		mm5 = (int)in[5 * 8];
++		mm6 = (int)in[3 * 8];
++		mm7 = (int)in[1 * 8];
++		mm0 = XVID_MULT(XVID_TAN1, mm4, 16) + mm7;
++		mm1 = XVID_MULT(XVID_TAN1, mm7, 16) - mm4;
++		mm2 = XVID_MULT(XVID_TAN3, mm5, 16) + mm6;
++		mm3 = XVID_MULT(XVID_TAN3, mm6, 16) - mm5;
++		mm7 = mm0 + mm2;
++		mm4 = mm1 - mm3;
++		mm0 = mm0 - mm2;
++		mm1 = mm1 + mm3;
++		mm6 = mm0 + mm1;
++		mm5 = mm0 - mm1;
++		mm5 = 2 * XVID_MULT(XVID_SQRT2, mm5, 16);
++		mm6 = 2 * XVID_MULT(XVID_SQRT2, mm6, 16);
++		mm1 = (int)in[2 * 8];
++		mm2 = (int)in[6 * 8];
++		mm3 = XVID_MULT(XVID_TAN2, mm2, 16) + mm1;
++		mm2 = XVID_MULT(XVID_TAN2, mm1, 16) - mm2;
++		mm0 = in[0] + in[4 * 8];
++		mm1 = in[0] - in[4 * 8];
++	}
++	else if (which == XVID_COLUMNS_4)
++	{
++		mm0 = (int)in[1 * 8];
++		mm2 = (int)in[3 * 8];
++		mm1 = XVID_MULT(XVID_TAN1, mm0, 16);
++		mm3 = XVID_MULT(XVID_TAN3, mm2, 16);
++		mm7 = mm0 + mm2;
++		mm4 = mm1 - mm3;
++		mm0 = mm0 - mm2;
++		mm1 = mm1 + mm3;
++		mm6 = mm0 + mm1;
++		mm5 = mm0 - mm1;
++		mm6 = 2 * XVID_MULT(XVID_SQRT2, mm6, 16);
++		mm5 = 2 * XVID_MULT(XVID_SQRT2, mm5, 16);
++		mm0 = mm1 = (int)in[0 * 8];
++		mm3 = (int)in[2 * 8];
++		mm2 = XVID_MULT(XVID_TAN2, mm3, 16);
++	}
++	else
++	{
++		mm7 = (int)in[1 * 8];
++		mm4 = XVID_MULT(XVID_TAN1, mm7, 16);
++		mm6 = mm7 + mm4;
++		mm5 = mm7 - mm4;
++		mm6 = 2 * XVID_MULT(XVID_SQRT2, mm6, 16);
++		mm5 = 2 * XVID_MULT(XVID_SQRT2, mm5, 16);
++		mm0 = mm1 = (int)in[0 * 8];
++		mm3 = (int)in[2 * 8];
++		mm2 = XVID_MULT(XVID_TAN2, mm3, 16);
++	}
++	spill = mm0 + mm3; mm3 = mm0 - mm3; mm0 = spill;   /* BUTTERFLY(mm0, mm3) */
++	spill = mm0 + mm7; mm7 = mm0 - mm7; mm0 = spill;   /* BUTTERFLY(mm0, mm7) */
++	out[0] = (int16_t)(mm0 >> XVID_COL_SHIFT);
++	out[7] = (int16_t)(mm7 >> XVID_COL_SHIFT);
++	spill = mm3 + mm4; mm4 = mm3 - mm4; mm3 = spill;   /* BUTTERFLY(mm3, mm4) */
++	out[3] = (int16_t)(mm3 >> XVID_COL_SHIFT);
++	out[4] = (int16_t)(mm4 >> XVID_COL_SHIFT);
++	spill = mm1 + mm2; mm2 = mm1 - mm2; mm1 = spill;   /* BUTTERFLY(mm1, mm2) */
++	spill = mm1 + mm6; mm6 = mm1 - mm6; mm1 = spill;   /* BUTTERFLY(mm1, mm6) */
++	out[1] = (int16_t)(mm1 >> XVID_COL_SHIFT);
++	out[6] = (int16_t)(mm6 >> XVID_COL_SHIFT);
++	spill = mm2 + mm5; mm5 = mm2 - mm5; mm2 = spill;   /* BUTTERFLY(mm2, mm5) */
++	out[2] = (int16_t)(mm2 >> XVID_COL_SHIFT);
++	out[5] = (int16_t)(mm5 >> XVID_COL_SHIFT);
++}
++
++/**
++ * xvid_columns_store() - The column pass over eight columns, results clamped to the pixels.
++ * @dest:  the pixels
++ * @ls:    their stride
++ * @in:    the row pass's results
++ * @which: the column transform (a constant in every caller)
++ * @add:   add (1) or replace (0) (a constant in every caller)
++ */
++static inline __attribute__((always_inline)) void xvid_columns_store(uint8_t *dest, ptrdiff_t ls, const short *in,
++                                                                     const int which, const int add)
++{
++	for (int i = 0; i < 8; i++)
++	{
++		int out[8];
++		xvid_column(in + i, which, out);
++		uint8_t *pixel = dest + i;
++		for (int y = 0; y < 8; y++, pixel += ls)
++		{
++			*pixel = M68K_CROP[add ? *pixel + out[y] : out[y]];
++		}
++	}
++}
++
++/**
++ * xvid_idct() - Xvid's IDCT to the pixels: put (add 0) or add (add 1).
++ * @dest:  the pixels (4-byte aligned)
++ * @ls:    their stride
++ * @in:    the coefficients (overwritten)
++ * @add:   add (1) or replace (0) (a constant in every caller)
++ */
++static inline __attribute__((always_inline)) void xvid_idct(uint8_t *dest, ptrdiff_t ls, short *in, const int add)
++{
++	const m68k_word *word = (const m68k_word *)in;
++	uint32_t beyond_column0 = 0;
++	for (int r = 0; r < 8; r++)
++		beyond_column0 |= (uint16_t)in[8 * r + 1] | word[4 * r + 1] | word[4 * r + 2] | word[4 * r + 3];
++	int rows = 0x07;
++	xvid_row(in + 0 * 8, XVID_TAB04, XVID_RND0);
++	xvid_row(in + 1 * 8, XVID_TAB17, XVID_RND1);
++	xvid_row(in + 2 * 8, XVID_TAB26, XVID_RND2);
++	if (xvid_row(in + 3 * 8, XVID_TAB35, XVID_RND3))
++		rows |= 0x08;
++	if (xvid_row(in + 4 * 8, XVID_TAB04, XVID_RND4))
++		rows |= 0x10;
++	if (xvid_row(in + 5 * 8, XVID_TAB35, XVID_RND5))
++		rows |= 0x20;
++	if (xvid_row(in + 6 * 8, XVID_TAB26, XVID_RND6))
++		rows |= 0x40;
++	if (xvid_row(in + 7 * 8, XVID_TAB17, XVID_RND7))
++		rows |= 0x80;
++
++	if (beyond_column0 == 0)
++	{
++		int out[8];
++		if (rows & 0xf0)
++			xvid_column(in, XVID_COLUMNS_8, out);
++		else if (rows & 0x08)
++			xvid_column(in, XVID_COLUMNS_4, out);
++		else
++			xvid_column(in, XVID_COLUMNS_3, out);
++		m68k_rows_store(dest, ls, out, add);
++		return;
++	}
++	if (rows & 0xf0)
++		xvid_columns_store(dest, ls, in, XVID_COLUMNS_8, add);
++	else if (rows & 0x08)
++		xvid_columns_store(dest, ls, in, XVID_COLUMNS_4, add);
++	else
++		xvid_columns_store(dest, ls, in, XVID_COLUMNS_3, add);
++}
++
++/**
++ * ff_m68k_xvid_idct_put() - FFmpeg's xvid_idct_put(), bit for bit.
++ * @dest:  the 8x8 pixels to replace
++ * @ls:    their stride
++ * @block: the coefficients (overwritten)
++ */
++void ff_m68k_xvid_idct_put(uint8_t *dest, ptrdiff_t ls, int16_t *block)
++{
++	xvid_idct(dest, ls, block, 0);
++}
++
++/**
++ * ff_m68k_xvid_idct_add() - FFmpeg's xvid_idct_add(), bit for bit.
++ * @dest:  the 8x8 pixels to add to
++ * @ls:    their stride
++ * @block: the coefficients (overwritten)
++ */
++void ff_m68k_xvid_idct_add(uint8_t *dest, ptrdiff_t ls, int16_t *block)
++{
++	xvid_idct(dest, ls, block, 1);
++}

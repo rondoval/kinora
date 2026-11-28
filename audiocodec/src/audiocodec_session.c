@@ -4,6 +4,7 @@
  * picks a backend, the rest are forwarded to it one to one.
  */
 #include <exec/memory.h>
+#include <strutil.h>
 
 #include "audiocodec_private.h"
 
@@ -31,6 +32,7 @@ static LONG params_read(struct AudioCodecBase *base, struct TagItem *tags, struc
 	    .OutputChannels = GetTagData(ACA_OutputChannels, 0, tags),
 	    .ExtradataSize = GetTagData(ACA_ExtradataSize, 0, tags),
 	    .Extradata = (CONST_APTR)GetTagData(ACA_Extradata, 0, tags),
+	    .BlockAlign = GetTagData(ACA_BlockAlign, 0, tags),
 	};
 	BOOL format_known = params->OutputFormat == ACF_S16 || params->OutputFormat == ACF_S32;
 	BOOL extradata_whole = (params->Extradata != NULL) == (params->ExtradataSize != 0);
@@ -86,7 +88,8 @@ static struct ACSession *session_open(struct AudioCodecBase *base, struct ACSess
  * @tags: ACA_Codec and what the container says of the stream (A0)
  * @base: the library base (A6)
  *
- * Return: the session, NULL when refused; ACA_ErrorPtr gets the reason.
+ * Return: the session, NULL when refused; ACA_ErrorPtr gets the reason, and
+ * ACA_BackendName the backend's name (an empty one for a refusal).
  */
 struct ACSession *AC_OpenSessionTagList(struct TagItem *tags asm("a0"), struct AudioCodecBase *base asm("a6"))
 {
@@ -100,6 +103,9 @@ struct ACSession *AC_OpenSessionTagList(struct TagItem *tags asm("a0"), struct A
 		session = session_open(base, &params, (const char *)GetTagData(ACA_Backend, 0, tags), &error);
 	if (error_out != NULL)
 		*error_out = session != NULL ? 0 : error;
+	char *name_out = (char *)GetTagData(ACA_BackendName, 0, tags);
+	if (name_out != NULL)
+		strlcpy(name_out, session != NULL ? session->backend->name : "", AC_BACKEND_NAME_SIZE);
 	return session;
 }
 

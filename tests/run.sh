@@ -5,6 +5,8 @@
 #   run.sh host [pytest options]    the code gates; no Amiga
 #   run.sh hw [pytest options]      the libraries, their tools and the player on an Amiga:
 #                                   run.sh hw --server amiga-pi4 [-k name] [--no-install]
+#   run.sh train [pytest options]   the profile-guided build's training round on an Amiga, with a
+#                                   profile-generating build (scripts/pgo-train.py runs it)
 #
 # The suite builds on emu68-common's test harness, which the build installs to
 # build/emu68-prefix/share/emu68-testing ($EMU68_TESTING names another place): build first
@@ -37,8 +39,12 @@ case "${1:-}" in
         shift
         exec "$venv/bin/python" -m pytest $places hw "$@"
         ;;
+    train)
+        shift
+        exec "$venv/bin/python" -m pytest $places train "$@"
+        ;;
     *)
-        echo "usage: run.sh host|hw [pytest options]" >&2
+        echo "usage: run.sh host|hw|train [pytest options]" >&2
         exit 2
         ;;
 esac

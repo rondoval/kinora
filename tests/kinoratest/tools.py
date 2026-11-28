@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
 """
-tools.py - DMXInfo and ACInfo run on the Amiga, their output read.
+tools.py - FilmInfo run on the Amiga, its output read: the container, a stream decoded, the codec tables.
 
-Both print lines of name=value pairs; a line may begin with a word and a number ("stream 0:",
-"packets 1 ="). The readers here turn them into dictionaries and lists.
+It prints lines of name=value pairs; a line may begin with words and a number ("stream 0:",
+"packets 1 =", "audio codec 3:"). The readers here turn them into dictionaries and lists.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def pairs(line: str) -> dict[str, str]:
 
 @dataclass
 class FileInfo:
-    """What DMXInfo printed about a file."""
+    """What FilmInfo printed about a file's container."""
 
     rc: int
     text: str
@@ -32,9 +32,9 @@ class FileInfo:
     result: dict[str, str] = field(default_factory=dict)            # seek=, read=
 
 
-def dmxinfo(device, args: str, timeout: float = 120) -> FileInfo:
-    """DMXInfo @args, read."""
-    rc, text = device.run_text("C:DMXInfo", args, timeout)
+def film_info(device, args: str, timeout: float = 120) -> FileInfo:
+    """FilmInfo @args (a file, and PACKETS, ALL or SEEK), read."""
+    rc, text = device.run_text("C:FilmInfo", args, timeout)
     info = FileInfo(rc, text)
     for line in text.splitlines():
         if line.startswith("format="):
@@ -55,7 +55,7 @@ def dmxinfo(device, args: str, timeout: float = 120) -> FileInfo:
 
 @dataclass
 class Decode:
-    """What ACInfo printed about a decode."""
+    """What FilmInfo AUDIO printed about a decode."""
 
     rc: int
     text: str
@@ -66,17 +66,61 @@ class Decode:
         return int(self.facts[name], 16 if name == "layout" else 10)
 
 
-def acinfo(device, args: str, timeout: float = 300) -> Decode:
-    """ACInfo @args, read."""
-    rc, text = device.run_text("C:ACInfo", args, timeout)
+def audio_decode(device, args: str, timeout: float = 300) -> Decode:
+    """FilmInfo @args AUDIO, read."""
+    rc, text = device.run_text("C:FilmInfo", f"{args} AUDIO", timeout)
     decode = Decode(rc, text)
     for line in text.splitlines():
         decode.facts.update(pairs(line))
     return decode
 
 
-def codec_table(device) -> list[dict[str, str]]:
-    """ACInfo without a file: the rows of the codec table."""
-    _, text = device.run_text("C:ACInfo", "", 60)
-    return [{"codec": re.match(r"codec (\d+):", line).group(1), **pairs(line)} for line in text.splitlines()
-            if line.startswith("codec ")]
+def codec_rows(device, kind: str) -> list[dict[str, str]]:
+    """FilmInfo without a file: the rows of one codec table, @kind "audio" or "video"."""
+    _, text = device.run_text("C:FilmInfo", "", 60)
+    return [{"codec": re.match(rf"{kind} codec (\d+):", line).group(1), **pairs(line)} for line in text.splitlines()
+            if line.startswith(f"{kind} codec ")]
+
+
+def audio_codecs(device) -> list[dict[str, str]]:
+    """audiocodec.library's codec table."""
+    return codec_rows(device, "audio")
+
+
+@dataclass
+class VideoDecode:
+    """What FilmInfo VIDEO printed about a decode."""
+
+    rc: int
+    text: str
+    facts: dict[str, str] = field(default_factory=dict)              # stream, codec, tag, open, backend, packets, pictures, us, decode, ...
+    infos: list[dict[str, str]] = field(default_factory=list)        # each stream info: width, height, crop, format, colorspace, rate, par
+    pictures: list[tuple[int, str]] = field(default_factory=list)    # MD5: (pts_ms, md5) a picture, in order
+    moved_at: int = -1                                               # SEEK: how many pictures came before the move
+
+    def num(self, name: str) -> int:
+        """The fact @name as a number."""
+        return int(self.facts[name])
+
+
+def video_decode(device, args: str, timeout: float = 300) -> VideoDecode:
+    """FilmInfo @args VIDEO, read."""
+    rc, text = device.run_text("C:FilmInfo", f"{args} VIDEO", timeout)
+    decode = VideoDecode(rc, text)
+    for line in text.splitlines():
+        if line.startswith("info "):
+            decode.infos.append(pairs(line))
+        elif line.startswith("picture "):
+            facts = pairs(line)
+            decode.pictures.append((int(facts["pts_ms"]), facts["md5"]))
+        elif line.startswith("moved="):
+            decode.facts.update(pairs(line))
+            decode.moved_at = len(decode.pictures)
+        else:
+            decode.facts.update(pairs(line))
+    return decode
+
+
+def video_decoders(device) -> list[dict[str, str]]:
+    """Every video codec driver's decoder rows."""
+    return codec_rows(device, "video")

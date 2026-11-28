@@ -65,7 +65,7 @@ static void wide_send(const struct reader *reader, struct wide_packet *wide, LON
 	struct Process *self = (struct Process *)FindTask(NULL);
 
 	memset(wide, 0, sizeof(*wide));
-	wide->message.mn_Node.ln_Name = (char *)&wide->packet;
+	wide->message.mn_Node.ln_Name = (char *)&wide->packet; /* DOS's rule, as in a StandardPacket: the handler finds the packet here */
 	wide->packet.dp_Link = &wide->message;
 	wide->packet.dp_Port = &self->pr_MsgPort;
 	wide->packet.dp_Type = action;

@@ -15,11 +15,22 @@
 #
 # Environment overrides:
 #   KINORA_BUILD_IMAGE     Toolchain image tag
-#   KINORA_CONFIGURE_ARGS  Extra args appended to the configure step
+#   KINORA_CONFIGURE_ARGS  Extra args appended to the configure step.  Kinora's modes
+#                          (KINORA_PGO, KINORA_TRACE) last one build: each configure
+#                          puts them back to USE and OFF before these args, which
+#                          override them, so CMake's cache keeps no profile-generating
+#                          or tracing build for the next one
+#   KINORA_BUILD_STAMP     A local build's mark in every $VER (build.sh sets it); empty
+#                          for a release.  Kinora takes it as KINORA_BUILD_STAMP,
+#                          emu68-common and the video libraries as EMU68_BUILD_STAMP
 #   KINORA_BUILD_DIR       CMake build directory, relative to the workspace (default: build)
 #   KINORA_INSTALL_DIR     Install prefix, relative to the workspace (default: install)
 #   KINORA_EMU68_PREFIX    An installed Emu68Common to use instead of building the
 #                          external/emu68-common submodule
+#   KINORA_VIDEOCODEC_SOURCE_DIR, KINORA_RPIVID_SOURCE_DIR
+#                          The video libraries' sources, relative to the workspace
+#                          (default: their submodules, external/videocodec-library and
+#                          external/rpivid-codec); a component's CI swaps its own in
 set -euo pipefail
 
 IMAGE=${KINORA_BUILD_IMAGE:-"ghcr.io/rondoval/amiga-build-container:gcc-v16.2"}
@@ -39,6 +50,12 @@ elif [ ! -f "${ROOT}/external/emu68-common/CMakeLists.txt" ]; then
 	echo "external/emu68-common is empty: run git submodule update --init" >&2
 	exit 1
 fi
+for source in "${KINORA_VIDEOCODEC_SOURCE_DIR:-external/videocodec-library}" "${KINORA_RPIVID_SOURCE_DIR:-external/rpivid-codec}"; do
+	if [ ! -f "${ROOT}/${source}/CMakeLists.txt" ]; then
+		echo "${source} is empty: run git submodule update --init --recursive" >&2
+		exit 1
+	fi
+done
 
 if ! command -v docker >/dev/null 2>&1; then
 	echo "docker not found in PATH" >&2
@@ -57,14 +74,34 @@ if [ -z "${KINORA_EMU68_MOUNTED:-}" ]; then
 	cmake -S external/emu68-common -B "$BD/emu68-common" \
 		-DCMAKE_TOOLCHAIN_FILE=/work/cmake/toolchain.cmake \
 		-DCMAKE_INSTALL_PREFIX="$EP" \
+		-DEMU68_BUILD_STAMP="${KINORA_BUILD_STAMP:-}" \
 		${KINORA_CONFIGURE_ARGS:-}
 	cmake --build "$BD/emu68-common" -j"$(nproc)" --target install
 fi
 
+# The video libraries, each a repository of its own, into a prefix of their own:
+# videocodec.library and its VideoCore backend first, rpivid.codec on their package.
+VP=/work/$BD/video-prefix
+for component in "videocodec-library:${KINORA_VIDEOCODEC_SOURCE_DIR:-external/videocodec-library}" \
+                 "rpivid-codec:${KINORA_RPIVID_SOURCE_DIR:-external/rpivid-codec}"; do
+	name=${component%%:*}
+	cmake -S "${component#*:}" -B "$BD/$name" \
+		-DCMAKE_TOOLCHAIN_FILE=/work/cmake/toolchain.cmake \
+		-DCMAKE_INSTALL_PREFIX="$VP" \
+		-DCMAKE_PREFIX_PATH="$EP;$VP" \
+		-DEMU68_BUILD_STAMP="${KINORA_BUILD_STAMP:-}" \
+		${KINORA_CONFIGURE_ARGS:-}
+	cmake --build "$BD/$name" -j"$(nproc)" --target install
+done
+
 cmake -S . -B "$BD" \
 	-DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake \
 	-DCMAKE_INSTALL_PREFIX="$ID" \
-	-DCMAKE_PREFIX_PATH="$EP" \
+	-DCMAKE_PREFIX_PATH="$EP;$VP" \
+	-DKINORA_BUILD_STAMP="${KINORA_BUILD_STAMP:-}" \
+	-DKINORA_VIDEOCODEC_SOURCE_DIR="/work/${KINORA_VIDEOCODEC_SOURCE_DIR:-external/videocodec-library}" \
+	-DKINORA_RPIVID_SOURCE_DIR="/work/${KINORA_RPIVID_SOURCE_DIR:-external/rpivid-codec}" \
+	-DKINORA_PGO=USE -DKINORA_TRACE=OFF \
 	${KINORA_CONFIGURE_ARGS:-}
 
 cmake --build "$BD" -j"$(nproc)" "$@"
@@ -81,7 +118,10 @@ docker run --rm \
 	-e HOME=/tmp \
 	-e LC_ALL=C \
 	-e KINORA_CONFIGURE_ARGS \
+	-e KINORA_BUILD_STAMP \
 	-e KINORA_BUILD_DIR \
 	-e KINORA_INSTALL_DIR \
+	-e KINORA_VIDEOCODEC_SOURCE_DIR \
+	-e KINORA_RPIVID_SOURCE_DIR \
 	"${IMAGE}" \
 	sh -ec "${BUILD_RECIPE}" sh "$@"

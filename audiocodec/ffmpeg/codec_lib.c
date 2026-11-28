@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
- * codec_lib.c - ffmpeg.codec, audiocodec.library's backend with FFmpeg's
+ * codec_lib.c - ffmpegaudio.codec, audiocodec.library's backend with FFmpeg's
  * audio decoders: its name, its function table and the calls' entry points.
  *
  * libnix's library start-up supplies the resident tag and the standard
@@ -16,13 +16,13 @@
 #include "codec_private.h"
 
 /* What libnix's library start-up asks for */
-const char LibName[] = "ffmpeg.codec";
-const char LibIdString[] = "ffmpeg.codec " KINORA_VERSION_TEXT " " KINORA_DATE;
+const char LibName[] = "ffmpegaudio.codec";
+const char LibIdString[] = "ffmpegaudio.codec " KINORA_VERSION_TEXT " " KINORA_DATE;
 const UWORD LibVersion = KINORA_VERSION;
 const UWORD LibRevision = KINORA_REVISION;
 
 /* The version cookie the Version command finds */
-static const char version_cookie[] __attribute__((used)) = "$VER: ffmpeg.codec " KINORA_VERSION_TEXT " " KINORA_DATE;
+static const char version_cookie[] __attribute__((used)) = "$VER: ffmpegaudio.codec " KINORA_VERSION_TEXT " " KINORA_DATE;
 
 LONG ACB_GetInfo(struct ACBackendInfo *info asm("a0"));
 LONG ACB_QueryCodec(ULONG index asm("d0"), struct ACCodecInfo *info asm("a0"));
@@ -35,7 +35,7 @@ LONG ACB_Flush(APTR session asm("a0"));
 /* The library's functions in the order of sfd/audiocodec_backend_lib.sfd, after the standard vectors libnix's start-up lists first */
 __attribute__((section(".list___FuncTable__"), used)) APTR codec_functions[] = {
     (APTR)ACB_GetInfo,    (APTR)ACB_QueryCodec,   (APTR)ACB_OpenSession, (APTR)ACB_CloseSession,
-    (APTR)ACB_SendPacket, (APTR)ACB_ReceiveFrame, (APTR)ACB_Flush,       (APTR)-1,
+    (APTR)ACB_SendPacket, (APTR)ACB_ReceiveFrame, (APTR)ACB_Flush,       KINORA_PGO_DUMP_ENTRY (APTR)-1,
 };
 
 /**

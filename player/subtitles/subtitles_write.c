@@ -21,7 +21,7 @@
 #include "subtitles_private.h"
 #include "../display/display.h"
 
-#define MARGIN_PART 24u     /* the gap under the text: the picture's rows divided by this */
+#define PERCENT 100
 #define GREY_TO_LONG 0x01010101u /* a grey times this: the same byte in all four of a long word */
 #define RUN_CHUNK 256u      /* pixels of a run made in Fast RAM before one copy into the frame */
 
@@ -187,23 +187,25 @@ static struct canvas *canvas_of(struct subtitles *subtitles, const struct VCFram
 
 /**
  * stack_place() - Where a stack goes in a frame.
- * @stack: the stack, drawn
- * @edge:  its edge
- * @frame: the frame
- * @place: gets the rectangle
+ * @stack:    the stack, drawn
+ * @edge:     its edge
+ * @distance: the gap from the frame's edge, in percent of its rows; halved where there is a bar
+ * @frame:    the frame
+ * @place:    gets the rectangle
  *
- * At the frame's foot, or at its top, a small gap kept: in the bar beside
- * the picture when the stack fits there, else over bar and picture.  The
- * gap does not follow the stack's height, so a cue stays put while others
- * come and go.
+ * At the frame's foot, or at its top, the gap kept: in the bar beside the
+ * picture when the stack fits there, else over bar and picture.  The gap
+ * does not follow the stack's height, so a cue stays put while others come
+ * and go.  A stack is at most half the frame's rows and the gap under a
+ * third, so it always fits the frame.
  *
  * Return: TRUE when all of it lies in the bar.
  */
-static BOOL stack_place(const struct stack *stack, enum edge edge, const struct VCFrame *frame, struct VCRect *place)
+static BOOL stack_place(const struct stack *stack, enum edge edge, ULONG distance, const struct VCFrame *frame, struct VCRect *place)
 {
 	LONG height = (LONG)stack->mask.height, rows = (LONG)frame->Height;
 	LONG bar = edge == EDGE_TOP ? frame->Crop.Y : rows - (frame->Crop.Y + frame->Crop.Height);
-	LONG gap = rows / (LONG)MARGIN_PART / (bar > 0 ? 2 : 1);
+	LONG gap = rows * (LONG)distance / PERCENT / (bar > 0 ? 2 : 1);
 	*place = (struct VCRect){
 	    .X = frame->Crop.X + (frame->Crop.Width - (LONG)stack->mask.width) / 2,
 	    .Y = edge == EDGE_TOP || rows < gap + height ? gap : rows - gap - height,
@@ -227,7 +229,7 @@ static void stack_write(const struct subtitles *subtitles, struct canvas *canvas
 	struct written *written = &canvas->written[edge];
 	struct VCRect place = {0};
 	BOOL drawn = stack->text_plane.bytes != NULL;
-	BOOL beside = drawn && stack_place(stack, edge, frame, &place);
+	BOOL beside = drawn && stack_place(stack, edge, subtitles->distance, frame, &place);
 	if (written->version == stack->version && memcmp(&written->rect, &place, sizeof(place)) == 0 && (!drawn || written->beside))
 		return; /* nothing to change: what the frame holds beside its picture is right */
 	if (written->rect.Height != 0)

@@ -2,10 +2,11 @@
 /*
  * libraries/demuxer.h - demuxer.library: a container file's streams and packets.
  *
- * The library opens a file (Matroska, MP4/MOV, MPEG-TS), says what streams it
- * holds and hands out their packets in file order.  It decodes nothing: video
- * packets go to videocodec.library, audio packets to audiocodec.library,
- * subtitle packets to whoever draws them.
+ * The library opens a file (Matroska, MP4/MOV, MPEG-TS, MPEG-PS, AVI), says
+ * what streams it holds and hands out their packets in file order, each
+ * stream's in the order it is decoded.  It decodes nothing: video packets go
+ * to videocodec.library, audio packets to audiocodec.library, subtitle packets
+ * to whoever draws them.
  *
  *   source = DMX_OpenTags(DMXA_FileName, name, DMXA_ErrorPtr, &error, TAG_DONE);
  *   DMX_GetInfo(source, &info);                 // info.Size set first, as in every structure here
@@ -31,6 +32,14 @@
  * - H.264 and H.265 packets are Annex-B byte streams whatever the file holds,
  *   and the stream's Extradata is its parameter sets the same way: what
  *   videocodec.library takes.
+ * - Every video packet holds whole pictures: MPEG-4 Part 2's packed
+ *   B-pictures come unpacked, a picture a packet, and MPEG-1 and MPEG-2 in
+ *   transport and programme streams are cut into pictures.
+ * - Every video packet's Pts is when its picture is shown, also where the
+ *   file says it only for some pictures (MPEG streams) or gives the decode
+ *   order's (AVI's frame numbers): MPEG-1, MPEG-2 and MPEG-4 Part 2 packets
+ *   then come a few at a time, a reference picture held until the next is
+ *   read, later than the file has them beside the other streams'.
  * - Calls return 0 or a DMXERR_*.
  */
 #ifndef LIBRARIES_DEMUXER_H
@@ -84,7 +93,7 @@ struct DMXSource; /* an open file; the library's own */
 struct DMXInfo
 {
 	ULONG Size;                 /* of this structure */
-	char Format[DMX_NAME_SIZE]; /* the container's name: "matroska", "mp4", "mpegts" */
+	char Format[DMX_NAME_SIZE]; /* the container's name, FFmpeg's: "matroska,webm", "mpegts", "mpeg", "avi" */
 	ULONG Streams;              /* how many streams DMX_GetStream() describes */
 	ULONG Chapters;             /* how many chapters DMX_GetChapter() describes */
 	VCTime Duration;            /* the whole length, VC_TIME_UNKNOWN when the file does not say */
@@ -117,6 +126,7 @@ struct DMXStream
 	ULONG Channels;   /* how many */
 	ULONG Bits;       /* ACC_PCM: bits a sample; else what the file says, 0 for nothing */
 	ULONG PcmFlags;   /* ACC_PCM: ACPCM_*, how the samples are laid out */
+	ULONG BlockAlign; /* the bytes of one coded block (ACA_BlockAlign), 0 when the file does not say */
 };
 
 /* DMXPacket.Flags */
@@ -138,7 +148,9 @@ struct DMXPacket
 };
 
 /* DMX_Seek() */
-#define DMXSEEK_Before 0 /* to the key frame at or before the time: playing from there reaches it */
+#define DMXSEEK_Before 0 /* to the key frame at or before the time: playing from there reaches it; in a programme stream,
+                            which has no index, its video from the next I-picture after where its times led, up to a
+                            group of pictures late */
 #define DMXSEEK_After 1  /* to the first key frame at or after it: stepping forward */
 
 /* One chapter (DMX_GetChapter()) */

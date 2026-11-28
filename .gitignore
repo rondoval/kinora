@@ -12,3 +12,6 @@
 /tests/.pytest_cache/
 
 /TODO.md
+
+# Editor settings
+/.vscode/

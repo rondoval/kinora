@@ -3,19 +3,25 @@
  * gui_screen.c - full screen: the picture on a screen of its own, and the
  * controls shown over its foot while the pointer moves.
  *
- * The screen is in the Workbench's mode and up to three pictures tall; the
- * engine writes the pictures into it and scrolls (display_screen.c).  A
+ * The screen is in the mode chosen in the settings, else in the
+ * Workbench's, and up to DISPLAY_PARTS pictures tall; the decoder writes
+ * the pictures into it and the display scrolls (display_screen.c).  A
  * borderless window over its first picture height takes the keys and the
  * pointer's moves.
  *
- * A moving pointer brings up a strip of controls along the screen's foot.
- * While it shows, the picture stands in the screen's first picture height
- * only, above the strip, and is not scrolled: a window can be drawn over one
- * place of the bitmap, not over a picture that moves between three.  When
- * the pointer has been still for a few seconds the strip goes and the
- * picture has the whole screen again.
+ * A moving pointer brings up a strip of controls along the screen's foot,
+ * a window at the foot of the first picture height.  While it shows, the
+ * picture stands in the rows above it in every picture height and is
+ * scrolled as ever; the display copies the strip's rows from the first
+ * into the others (docs/architecture.md 7.1).  When the pointer has been
+ * still for a few seconds the strip goes and the picture has the whole
+ * screen again.
+ *
+ * The pointer itself shows only while the film stands still, the strip up
+ * or not.  While the film plays the picture heights flip, and VideoCore.card
+ * moves the view at once but the pointer only at the next blank: a pointer
+ * shown then jumps between two places.
  */
-#include <exec/memory.h>
 #include <intuition/screens.h>
 #include <libraries/Picasso96.h>
 #include <classes/window.h>
@@ -26,8 +32,12 @@
 
 #include "gui_private.h"
 
-#define POINTER_WORDS 6 /* an empty pointer image: two control words, one line, two end words */
+#define POINTER_WORDS 6  /* an empty pointer image: two control words, one line of two planes, two end words */
+#define POINTER_HEIGHT 1 /* its lines */
+#define POINTER_WIDTH 16 /* and its pixels across: a sprite's */
 #define STRIP_IDLE_TICKS 12u /* ticks with the pointer still and no control used after which the strip goes: three seconds */
+
+static UWORD __chip blank_pointer[POINTER_WORDS]; /* the empty pointer: every pixel clear; in Chip RAM, as SetPointer() wants */
 
 /**
  * full_screen_place() - Where on the full screen the picture goes: all of it, or above the strip.
@@ -58,6 +68,33 @@ static LONG place_set(struct gui *gui)
 }
 
 /**
+ * pointer_set() - Hide the pointer in a window of the full screen while the film plays, show it while it stands still.
+ * @gui:    the front
+ * @window: the window; NULL does nothing
+ */
+static void pointer_set(const struct gui *gui, struct Window *window)
+{
+	if (window == NULL)
+		return;
+	if (gui->film_playing)
+		SetPointer(window, blank_pointer, POINTER_HEIGHT, POINTER_WIDTH, 0, 0);
+	else
+		ClearPointer(window);
+}
+
+/**
+ * full_screen_pointer() - Bring the full screen's pointer up to the film: hidden while it plays (gui->film_playing).
+ * @gui: the front; without a full screen nothing happens
+ *
+ * Both of the screen's windows take it: the strip's has a pointer of its own once it is the active one.
+ */
+void full_screen_pointer(const struct gui *gui)
+{
+	pointer_set(gui, gui->screen_window);
+	pointer_set(gui, gui->strip.window);
+}
+
+/**
  * strip_hide() - Take the controls off the full screen and give the picture the whole of it.
  * @gui:          the front
  * @screen_stays: the screen stays: tell the engine its new place
@@ -67,8 +104,6 @@ static void strip_hide(struct gui *gui, BOOL screen_stays)
 	if (gui->strip.window_object == NULL)
 		return;
 	controls_free(&gui->strip);
-	if (gui->blank_pointer != NULL)
-		SetPointer(gui->screen_window, gui->blank_pointer, 1, 16, 0, 0);
 	if (screen_stays)
 		place_set(gui);
 }
@@ -89,9 +124,9 @@ static void strip_show(struct gui *gui)
 	}
 	struct Window *window = gui->strip.window;
 	ChangeWindowBox(window, 0, (WORD)((LONG)gui->screen_height - window->Height), (WORD)gui->screen_width, window->Height);
-	ClearPointer(gui->screen_window);
+	pointer_set(gui, window); /* a new window shows the pointer */
 	place_set(gui);
-	film_follow(gui);
+	film_follow(gui); /* its status line and seek slider as the film is now */
 }
 
 /**
@@ -102,31 +137,38 @@ void full_screen_close(struct gui *gui)
 {
 	strip_hide(gui, FALSE);
 	if (gui->screen_window != NULL)
-	{
-		ClearPointer(gui->screen_window);
 		CloseWindow(gui->screen_window);
-	}
 	gui->screen_window = NULL;
-	if (gui->blank_pointer != NULL)
-		FreeMem(gui->blank_pointer, POINTER_WORDS * sizeof(UWORD));
-	gui->blank_pointer = NULL;
 	if (gui->screen != NULL)
 		p96CloseScreen(gui->screen);
 	gui->screen = NULL;
 }
 
 /**
- * full_screen_open() - Open a screen in the Workbench's mode, as many pictures tall as the card's memory allows.
+ * full_screen_mode() - The screen mode the full screen opens in.
+ * @gui: the front, its window open
+ *
+ * Return: the mode the settings name; with none named, or one the display
+ * cannot use (gone with another monitor, say), the Workbench's.
+ */
+ULONG full_screen_mode(const struct gui *gui)
+{
+	ULONG mode = gui->settings.screen_mode;
+	return display_mode_usable(mode) ? mode : (ULONG)GetVPModeID(&gui->player.window->WScreen->ViewPort);
+}
+
+/**
+ * full_screen_open() - Open a screen in its mode (full_screen_mode()), as many pictures tall as the card's memory allows.
  * @gui: the front
  *
  * The screen is black, and a borderless window on it takes the keys and the
- * pointer's moves under an empty pointer.
+ * pointer's moves; the pointer shows on it while the film stands still.
  *
  * Return: TRUE, FALSE when no screen or window opened.
  */
 static BOOL full_screen_open(struct gui *gui)
 {
-	ULONG mode = (ULONG)GetVPModeID(&gui->player.window->WScreen->ViewPort);
+	ULONG mode = full_screen_mode(gui);
 	ULONG depth = p96GetModeIDAttr(mode, P96IDA_DEPTH);
 	gui->screen_width = p96GetModeIDAttr(mode, P96IDA_WIDTH);
 	gui->screen_height = p96GetModeIDAttr(mode, P96IDA_HEIGHT);
@@ -158,9 +200,7 @@ static BOOL full_screen_open(struct gui *gui)
 	                                    TAG_DONE);
 	if (gui->screen_window == NULL)
 		return FALSE;
-	gui->blank_pointer = AllocMem(POINTER_WORDS * sizeof(UWORD), MEMF_CHIP | MEMF_CLEAR);
-	if (gui->blank_pointer != NULL)
-		SetPointer(gui->screen_window, gui->blank_pointer, 1, 16, 0, 0);
+	pointer_set(gui, gui->screen_window);
 	return TRUE;
 }
 

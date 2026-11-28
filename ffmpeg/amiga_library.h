@@ -40,4 +40,19 @@ void ffmpeg_leave(void);
 BOOL library_open(void);
 void library_close(void);
 
+/*
+ * A profile-generating build (KINORA_PGO GENERATE, docs/architecture.md section 3) has one
+ * private call after the public ones: PGO_Dump(), which writes the profile kept so far as one
+ * gcda stream (pgo_dump.c), called by the PgoDump tool from the training rig's process.  A
+ * library's function table ends with the macro, within the line of its last entry:
+ *
+ *   (APTR)ACB_Flush, KINORA_PGO_DUMP_ENTRY (APTR)-1,
+ */
+#ifdef KINORA_PGO_GENERATE
+LONG PGO_Dump(STRPTR path asm("a0"));
+#define KINORA_PGO_DUMP_ENTRY (APTR)PGO_Dump,
+#else
+#define KINORA_PGO_DUMP_ENTRY
+#endif
+
 #endif /* KINORA_FFMPEG_AMIGA_LIBRARY_H */

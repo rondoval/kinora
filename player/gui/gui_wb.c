@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MPL-2.0 */
 /*
- * gui_wb.c - the Workbench's part: icons dropped on the window become films
- * of the playlist.
+ * gui_wb.c - the Workbench's part: icons dropped on the player's window
+ * become the playlist, those dropped on the playlist window join it.
  */
 #include <string.h>
 #include <workbench/workbench.h>
@@ -26,8 +26,30 @@ void drop_open(struct gui *gui)
 	if (WorkbenchBase == NULL)
 		return;
 	gui->drop_port = CreateMsgPort();
-	if (gui->drop_port != NULL)
-		gui->drop_window = AddAppWindowA(0, 0, gui->player.window, gui->drop_port, NULL);
+	gui->drop_window = drop_add(gui, gui->player.window, DROP_PLAYER);
+}
+
+/**
+ * drop_add() - Make a window one that icons can be dropped on.
+ * @gui:    the front, drop_open() done
+ * @window: the window
+ * @place:  which window it is, for drop_take()
+ *
+ * Return: the AppWindow for drop_remove(), NULL when there is no Workbench or no memory.
+ */
+struct AppWindow *drop_add(struct gui *gui, struct Window *window, enum drop_place place)
+{
+	return gui->drop_port != NULL ? AddAppWindowA(place, 0, window, gui->drop_port, NULL) : NULL;
+}
+
+/**
+ * drop_remove() - A window takes no more icons.
+ * @drop_window: what drop_add() gave; NULL does nothing
+ */
+void drop_remove(struct AppWindow *drop_window)
+{
+	if (drop_window != NULL)
+		RemoveAppWindow(drop_window);
 }
 
 /**
@@ -36,8 +58,7 @@ void drop_open(struct gui *gui)
  */
 void drop_close(struct gui *gui)
 {
-	if (gui->drop_window != NULL)
-		RemoveAppWindow(gui->drop_window);
+	drop_remove(gui->drop_window);
 	gui->drop_window = NULL;
 	if (gui->drop_port != NULL)
 	{
@@ -53,7 +74,8 @@ void drop_close(struct gui *gui)
 }
 
 /**
- * drop_take() - Take the icons dropped on the window: they replace the playlist and the first plays.
+ * drop_take() - Take the icons dropped: on the player's window they replace the playlist and the first plays; on the
+ *               playlist window they go behind its films.
  * @gui: the front
  */
 void drop_take(struct gui *gui)
@@ -61,7 +83,8 @@ void drop_take(struct gui *gui)
 	struct AppMessage *message;
 	while (gui->drop_port != NULL && (message = (struct AppMessage *)GetMsg(gui->drop_port)) != NULL)
 	{
-		if (message->am_NumArgs > 0)
+		BOOL replace = message->am_ID == DROP_PLAYER && message->am_NumArgs > 0;
+		if (replace)
 			playlist_clear(&gui->playlist);
 		for (LONG i = 0; i < message->am_NumArgs; i++)
 		{
@@ -71,6 +94,7 @@ void drop_take(struct gui *gui)
 				playlist_add(&gui->playlist, (CONST_STRPTR)path);
 		}
 		ReplyMsg(&message->am_Message);
-		film_play(gui, 0);
+		if (replace)
+			film_play(gui, 0);
 	}
 }

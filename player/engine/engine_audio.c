@@ -11,6 +11,12 @@
  * them (version 6 on), else 16-bit, and 7.1, which only has a 32-bit sample
  * type, comes with them.  A failure of the sound drops the audio and leaves
  * the film playing.
+ *
+ * After the open and every move the sound starts with the picture: its
+ * packets wait until the file's first video packet is read, and those that
+ * end before that picture's time are passed over.  A programme stream's move
+ * lands between key frames, and its video goes on from the next I-picture,
+ * up to a second after the sound.
  */
 #include <proto/exec.h>
 #include <proto/demuxer.h>
@@ -20,6 +26,7 @@
 
 #define MICROSECONDS_PER_SECOND 1000000
 #define PIECE_FRAMES 256u /* sample frames converted on the stack at a time */
+#define SOUND_WAIT_MOST 3000000 /* microseconds of sound read that wait for the first picture at most: a film may lack it */
 
 /**
  * audio_open() - Open the decoder for the file's audio stream.
@@ -37,6 +44,7 @@ void audio_open(struct engine *engine)
 	engine->audio_32bit = abilities.wide;
 	engine->audio_surround = abilities.surround;
 	audio_out_placement(0, &engine->placement);
+	engine->sound_waits = engine->video_decoder != NULL;
 	engine->audio_decoder = AC_OpenSessionTags(ACA_Codec, stream->Codec,
 	                                           ACA_Extradata, (ULONG)stream->Extradata,
 	                                           ACA_ExtradataSize, stream->ExtradataSize,
@@ -46,6 +54,8 @@ void audio_open(struct engine *engine)
 	                                           ACA_PcmFlags, stream->PcmFlags,
 	                                           ACA_OutputFormat, engine->audio_32bit ? ACF_S32 : ACF_S16,
 	                                           ACA_OutputChannels, engine->audio_surround ? 0 : AUDIO_STEREO_CHANNELS,
+	                                           ACA_BlockAlign, stream->BlockAlign,
+	                                           ACA_BackendName, (ULONG)engine->audio_backend,
 	                                           TAG_DONE);
 }
 
@@ -190,6 +200,37 @@ static BOOL pending_write(struct engine *engine)
 }
 
 /**
+ * sound_before_picture() - Whether the sound's next packet is passed over: it ends before the first picture since the open or the move.
+ * @engine: the engine
+ * @packet: the audio queue's first packet
+ * @wait:   gets TRUE when that cannot be told yet: no video packet read, and not too much sound waiting
+ *
+ * The first packet that goes on to the decoder ends the wait.
+ *
+ * Return: TRUE to pass it over.
+ */
+static BOOL sound_before_picture(struct engine *engine, const struct DMXPacket *packet, BOOL *wait)
+{
+	*wait = FALSE;
+	if (!engine->sound_waits)
+		return FALSE;
+	ObtainSemaphore(&engine->queue_lock); /* the reader notes the first video packet's time meanwhile */
+	VCTime picture = engine->reads.video_first;
+	BOOL waited_enough = engine->file_end || queue_duration(&engine->audio_queue) > SOUND_WAIT_MOST;
+	ReleaseSemaphore(&engine->queue_lock);
+	if (picture == VC_TIME_UNKNOWN && !waited_enough)
+	{
+		*wait = TRUE;
+		return FALSE;
+	}
+	VCTime end = packet->Pts + (packet->Duration != VC_TIME_UNKNOWN ? packet->Duration : 0);
+	if (picture != VC_TIME_UNKNOWN && packet->Pts != VC_TIME_UNKNOWN && end <= picture)
+		return TRUE;
+	engine->sound_waits = FALSE;
+	return FALSE;
+}
+
+/**
  * audio_feed() - Give the decoder the queue's next packet, or the stream's end.
  * @engine: the engine
  *
@@ -198,9 +239,15 @@ static BOOL pending_write(struct engine *engine)
 static BOOL audio_feed(struct engine *engine)
 {
 	BOOL ended;
+	BOOL wait = FALSE;
 	const struct DMXPacket *from = reader_next(engine, &engine->audio_queue, &ended);
 	struct ACPacket packet = {.Size = sizeof(packet), .Pts = VC_TIME_UNKNOWN}; /* Length 0: the end */
-	if (from == NULL && (!ended || engine->audio_end_sent))
+	if (from != NULL && sound_before_picture(engine, from, &wait))
+	{
+		reader_take(engine, &engine->audio_queue);
+		return TRUE;
+	}
+	if (wait || (from == NULL && (!ended || engine->audio_end_sent)))
 		return FALSE;
 	if (from != NULL)
 	{
@@ -282,4 +329,5 @@ void audio_flush(struct engine *engine)
 	engine->pending_held = FALSE;
 	engine->audio_end_sent = FALSE;
 	engine->audio_done = FALSE;
+	engine->sound_waits = engine->video_decoder != NULL;
 }

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
- * codec_private.h - ffmpeg.codec's own structures.
+ * codec_private.h - ffmpegaudio.codec's own structures.
  *
  *   codec_lib.c       the library: its name, its function table, the calls' entry points
  *   codec_table.c     the codec rows, and FFmpeg's decoder for an ACC_*

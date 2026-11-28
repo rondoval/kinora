@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(kinora VERSION 0.1 LANGUAGES C)
+project(kinora VERSION 0.2 LANGUAGES C ASM) # ASM: emu68-common's memory functions, in every FFmpeg binary (ffmpeg/)
 # The one version of the repository: every binary reports it. Bump it here only.
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -25,6 +25,28 @@ add_compile_definitions(
 # scripts/docker-build.sh builds it first and passes its prefix.
 find_package(Emu68Common 2.3 CONFIG REQUIRED)
 
+# The video libraries, repositories of their own that Kinora builds and ships:
+# external/videocodec-library (videocodec.library, videocore.codec, vcjpeg.datatype, VCInfo,
+# VCGrab) and external/rpivid-codec (rpivid.codec).  scripts/docker-build.sh builds them after
+# emu68-common, into a prefix of their own: videocodec.h comes from their package, and what
+# they install goes into Kinora's install tree and archive (below).
+find_package(VideoCodec 0.7 CONFIG REQUIRED)
+get_filename_component(KINORA_VIDEO_PREFIX "${VideoCodec_DIR}/../../.." ABSOLUTE)
+set(KINORA_VIDEOCODEC_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/videocodec-library" CACHE PATH
+    "videocodec-library's sources, for the licences the package takes from them")
+set(KINORA_RPIVID_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/rpivid-codec" CACHE PATH
+    "rpivid-codec's sources, for the licence and notices the package takes from them")
+
+# The profile-guided FFmpeg (docs/architecture.md, section 3): USE lays FFmpeg out by the
+# profiles in profiles/ (each configuration without them is built as OFF); GENERATE builds the
+# instrumented libraries and PgoDump for a training round (scripts/pgo-train.py). The profiles
+# are made for the default target (68040 with its FPU); another target builds without them.
+set(KINORA_PGO "USE" CACHE STRING "Profile-guided FFmpeg: OFF, GENERATE or USE")
+set_property(CACHE KINORA_PGO PROPERTY STRINGS OFF GENERATE USE)
+if(NOT KINORA_PGO MATCHES "^(OFF|GENERATE|USE)$")
+    message(FATAL_ERROR "KINORA_PGO is OFF, GENERATE or USE, not ${KINORA_PGO}")
+endif()
+
 # Our own code is gnu23 (enum types with a fixed underlying type). FFmpeg builds by its
 # own rules in ffmpeg/.
 set(CMAKE_C_STANDARD 23)
@@ -44,19 +66,41 @@ set(KINORA_COMPILE_OPTIONS
 
 add_subdirectory(ffmpeg)
 add_subdirectory(freetype)
+# Every binary of Kinora's own includes include/libraries/*.h, which include
+# <libraries/videocodec.h>: the package's, ahead of the toolchain image's copy.
+link_libraries(VideoCodec::headers)
 add_subdirectory(demuxer)
 add_subdirectory(audiocodec)
+add_subdirectory(videocodec-ffmpeg)
 add_subdirectory(player)
 add_subdirectory(tools)
+
+# The video libraries' files, from their prefix into Kinora's install tree as they lie
+# there: LIBS/videocodec.library and LIBS/videocodec/ (videocore.codec, rpivid.codec),
+# C/VCInfo, Classes/DataTypes/vcjpeg.datatype, Storage/DataTypes/VCJPEG,
+# Tools/Commodities/VCGrab with its icon, Developer/ (the rigs and the examples), and the
+# public headers into Developer/include.
+install(DIRECTORY "${KINORA_VIDEO_PREFIX}/LIBS/" DESTINATION LIBS USE_SOURCE_PERMISSIONS)
+install(PROGRAMS "${KINORA_VIDEO_PREFIX}/C/VCInfo" DESTINATION C)
+install(DIRECTORY "${KINORA_VIDEO_PREFIX}/Classes" "${KINORA_VIDEO_PREFIX}/Storage" "${KINORA_VIDEO_PREFIX}/Tools"
+        "${KINORA_VIDEO_PREFIX}/Developer" DESTINATION . USE_SOURCE_PERMISSIONS)
+foreach(kind libraries proto clib inline pragmas)
+    install(DIRECTORY "${KINORA_VIDEO_PREFIX}/include/${kind}" DESTINATION Developer/include
+            FILES_MATCHING PATTERN "videocodec*")
+endforeach()
 
 # ---------------------------------------------------------------------------
 # package: Kinora-<version>[-<stamp>].lha with the Installer script.
 #
 #   Install, Install.info, ReadMe, ReadMe.info
 #   Kinora/      the program, its icon, Fonts/
-#   LIBS/        demuxer.library, audiocodec.library, audiocodec/ffmpeg.codec
-#   C/           DMXInfo, ACInfo
-#   Developer/   the public headers
+#   LIBS/        demuxer.library, audiocodec.library, audiocodec/ffmpegaudio.codec,
+#                videocodec/ffmpegvideo.codec, and the video libraries: videocodec.library,
+#                videocodec/videocore.codec, videocodec/rpivid.codec
+#   C/           FilmInfo, VCInfo
+#   Classes/, Storage/   vcjpeg.datatype and its descriptor VCJPEG
+#   Tools/       Commodities/VCGrab and its icon
+#   Developer/   the public headers, the video libraries' test rigs and examples
 #   Licenses/    the licences, and what FFmpeg was built from and how
 #
 # The amiga-build-container image ships the archiver (lha): build the target through
@@ -87,7 +131,7 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/Install.in" "${CMAKE_BINAR
 configure_file("${CMAKE_CURRENT_SOURCE_DIR}/installer/ReadMe.in" "${CMAKE_BINARY_DIR}/installer/ReadMe" @ONLY)
 
 add_custom_target(package
-    DEPENDS Kinora demuxer_library audiocodec_library ffmpeg_codec DMXInfo ACInfo
+    DEPENDS Kinora demuxer_library audiocodec_library ffmpegaudio_codec ffmpegvideo_codec FilmInfo
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${PACKAGE_TREE}" "${PACKAGE_STAGE}" "${PACKAGE_ARCHIVE}"
     # what install() places, in a tree of its own: the build's install prefix is left alone
     COMMAND ${CMAKE_COMMAND} --install "${CMAKE_BINARY_DIR}" --prefix "${PACKAGE_TREE}"
@@ -97,6 +141,9 @@ add_custom_target(package
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/LIBS" "${PACKAGE_STAGE}/LIBS"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/C" "${PACKAGE_STAGE}/C"
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/Developer" "${PACKAGE_STAGE}/Developer"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/Classes" "${PACKAGE_STAGE}/Classes"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/Storage" "${PACKAGE_STAGE}/Storage"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PACKAGE_TREE}/Tools" "${PACKAGE_STAGE}/Tools"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_BINARY_DIR}/installer/Install" "${CMAKE_BINARY_DIR}/installer/ReadMe"
             "${CMAKE_CURRENT_SOURCE_DIR}/installer/Install.info" "${CMAKE_CURRENT_SOURCE_DIR}/installer/ReadMe.info"
             "${PACKAGE_STAGE}/"
@@ -106,9 +153,17 @@ add_custom_target(package
             "${PACKAGE_STAGE}/Licenses/FreeType-FTL"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/dist/fonts/DejaVuSans.license.txt"
             "${PACKAGE_STAGE}/Licenses/DejaVuSans"
-    # what the two LGPL libraries' FFmpeg was built from: the change to its source and the script that builds it
+    # the video libraries: videocodec-library's (BSD-3-Clause), VCGrab's Matroska writer's
+    # (mkv-writer, BSD-3-Clause), rpivid.codec's (GPL-2.0, a binary of its own) with its notices
+    COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_VIDEOCODEC_SOURCE_DIR}/LICENSE" "${PACKAGE_STAGE}/Licenses/videocodec-library"
+    COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_VIDEOCODEC_SOURCE_DIR}/tools/vcgrab/mkv/LICENSE" "${PACKAGE_STAGE}/Licenses/mkv-writer"
+    COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_RPIVID_SOURCE_DIR}/LICENSE" "${PACKAGE_STAGE}/Licenses/rpivid-codec"
+    COMMAND ${CMAKE_COMMAND} -E copy "${KINORA_RPIVID_SOURCE_DIR}/NOTICE" "${PACKAGE_STAGE}/Licenses/rpivid-codec.NOTICE"
+    # what the three LGPL binaries' FFmpeg was built from: the changes to its source, the script that builds it
+    # and the headers it forces in
     COMMAND ${CMAKE_COMMAND} -E copy ${KINORA_FFMPEG_PATCHES} "${CMAKE_CURRENT_SOURCE_DIR}/scripts/build-ffmpeg.sh"
-            "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/amiga_shim.h" "${PACKAGE_STAGE}/Licenses/ffmpeg/"
+            "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/amiga_shim.h" "${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/branchless_clip.h"
+            "${PACKAGE_STAGE}/Licenses/ffmpeg/"
     # the archive holds the drawer, so that it unpacks into one
     COMMAND sh -c "cd '${PACKAGE_DIR}' && '${LHA_EXECUTABLE}' a '${PACKAGE_ARCHIVE}' '${PACKAGE_NAME}'"
     COMMAND ${CMAKE_COMMAND} -E echo "package: ${PACKAGE_ARCHIVE}"

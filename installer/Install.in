@@ -109,13 +109,12 @@
 ; What Kinora needs and this archive does not bring
 ; ---------------------------------------------------------------------------
 
-; videocodec.library 0.6 decodes the video: 6 = (0 << 16) | 6.
+; The video libraries talk to the VideoCore through vchiq.device, which comes
+; with the Emu68 driver stack; the player shows pictures through Picasso96 and
+; plays sound through AHI.
 (set #missing "")
-(if (exists "LIBS:videocodec.library" (noreq))
-    (if (< (getversion "LIBS:videocodec.library") 6)
-        (set #missing (cat #missing "* videocodec.library 0.6 (an older one is here)\n"))
-    )
-    (set #missing (cat #missing "* videocodec.library 0.6, with its codecs\n"))
+(if (NOT (exists "DEVS:vchiq.device" (noreq)))
+    (set #missing (cat #missing "* vchiq.device, from the Emu68 driver stack\n"))
 )
 (if (NOT (exists "LIBS:Picasso96API.library" (noreq)))
     (set #missing (cat #missing "* Picasso96\n"))
@@ -131,19 +130,20 @@
                         "Kinora plays nothing without these, which\n"
                         "were not found on this system:\n\n"
                         #missing
-                        "\nvideocodec.library comes with the emu68\n"
-                        "driver stack.  Install Kinora anyway?"
+                        "\nInstall Kinora anyway?"
                     )
                 )
                 (help
                     (cat
-                        "Kinora decodes video through\n"
-                        "videocodec.library and its codecs, shows it\n"
-                        "through Picasso96 and plays sound through\n"
-                        "AHI.  It can be installed first and the\n"
-                        "missing parts later; until then films do\n"
-                        "not open.  The ReadMe says where each part\n"
-                        "comes from."
+                        "The video libraries in this archive decode\n"
+                        "on the Pi's VideoCore, which they reach\n"
+                        "through vchiq.device: install it with the\n"
+                        "Emu68 driver stack's Install script.  Kinora\n"
+                        "shows the picture through Picasso96 and plays\n"
+                        "the sound through AHI.  Everything can be\n"
+                        "installed first and the missing parts later;\n"
+                        "until then films do not open.  The ReadMe\n"
+                        "says where each part comes from."
                     )
                 )
                 (default 1)
@@ -157,48 +157,91 @@
 ; Questions
 ; ---------------------------------------------------------------------------
 
-(set #dest
-    (askdir
-        (prompt
-            (cat
-                "Kinora " #kinora-version "\n\n"
-                "Where shall the drawer \"Kinora\" be made?"
+; Bit layout of the selection mask:
+;   0 Kinora (the player)   1 the video libraries   2 vcjpeg.datatype
+;   3 VCGrab                4 FilmInfo
+; The video libraries are videocodec.library, its codec drivers and VCInfo;
+; the player, vcjpeg.datatype and VCGrab work through them, so each brings them
+; along.  vcjpeg.datatype and VCGrab are optional: each starts ticked once it is
+; installed, so that an upgrade replaces it.  Default 19 = the player, the
+; video libraries and the tools.
+(set #features-default 19)
+(if (exists "SYS:Classes/DataTypes/vcjpeg.datatype" (noreq)) (set #features-default (+ #features-default 4)))
+(if (exists "SYS:Tools/Commodities/VCGrab" (noreq)) (set #features-default (+ #features-default 8)))
+(if (= @user-level 0)
+    (set #features #features-default)        ; NOVICE: the recommended set, silently
+    (set #features
+        (askoptions
+            (prompt (cat "Kinora " #kinora-version "\n\nWhat shall be installed?"))
+            (help
+                (cat
+                    "The video libraries decode video and pictures\n"
+                    "on the Pi's VideoCore for every program that\n"
+                    "uses them: videocodec.library, its codec\n"
+                    "drivers (H.264 and pictures, and H.265 on a\n"
+                    "Pi 4 or CM4; MPEG-1, MPEG-2, MPEG-4, DivX 3,\n"
+                    "H.263 and Theora on the 68k) and VCInfo,\n"
+                    "which checks them.\n"
+                    "Kinora needs them; they can be installed\n"
+                    "without it.\n\n"
+                    "vcjpeg.datatype decodes JPEG pictures of\n"
+                    "about 2 megapixels and more on the VideoCore\n"
+                    "for every program that loads pictures through\n"
+                    "datatypes.  VCGrab records the screen to a\n"
+                    "film file.  FilmInfo says what a film holds\n"
+                    "and how its sound and picture decode.\n\n"
+                    @askoptions-help
+                )
             )
-        )
-        (help
-            (cat
-                "The program, its icon and the font it draws\n"
-                "subtitles with go into a drawer \"Kinora\"\n"
-                "inside the drawer chosen here.  The\n"
-                "libraries go to LIBS: wherever that is.\n\n"
-                @askdir-help
+            (choices
+                "Kinora          (the player)"
+                "video libraries (videocodec.library, VCInfo)"
+                "vcjpeg.datatype (JPEG pictures)"
+                "VCGrab          (screen recorder)"
+                "FilmInfo        (shell tool)"
             )
+            (default #features-default)
         )
-        (default @default-dest)
     )
 )
-(set #drawer (tackon #dest "Kinora"))
-(set @default-dest #drawer)
+(set #install-player (IN #features 0))
+(set #install-video  (IN #features 1))
+(set #install-vcjpeg (IN #features 2))
+(set #install-vcgrab (IN #features 3))
+(set #install-tools  (IN #features 4))
+(if (OR #install-player (OR #install-vcjpeg #install-vcgrab)) (set #install-video 1))
+(if (= #features 0)
+    (
+        (message "Nothing was chosen: nothing is installed." (all))
+        (exit (quiet))
+    )
+)
 
-(set #install-tools
-    (askbool
-        (prompt
-            (cat
-                "Install the two shell tools to C: as well?\n\n"
-                "DMXInfo says what demuxer.library makes of a\n"
-                "film, ACInfo what audiocodec.library decodes.\n"
-                "Kinora does not need them."
+(set #drawer "")
+(if #install-player
+    (
+        (set #dest
+            (askdir
+                (prompt
+                    (cat
+                        "Kinora " #kinora-version "\n\n"
+                        "Where shall the drawer \"Kinora\" be made?"
+                    )
+                )
+                (help
+                    (cat
+                        "The program, its icon and the font it draws\n"
+                        "subtitles with go into a drawer \"Kinora\"\n"
+                        "inside the drawer chosen here.  The\n"
+                        "libraries go to LIBS: wherever that is.\n\n"
+                        @askdir-help
+                    )
+                )
+                (default @default-dest)
             )
         )
-        (help
-            (cat
-                "Both are small and only print.  They help\n"
-                "when a film does not play: their output says\n"
-                "what the file holds.\n\n"
-                @askbool-help
-            )
-        )
-        (default 1)
+        (set #drawer (tackon #dest "Kinora"))
+        (set @default-dest #drawer)
     )
 )
 
@@ -208,33 +251,112 @@
 
 (complete 0)
 
-(makedir #drawer (infos))
-(copyfiles
-    (prompt "Copying Kinora, its icon and its font...")
-    (help @copyfiles-help)
-    (source (tackon #archive "Kinora"))
-    (dest #drawer)
-    (all)
-    (optional "force")
+(if #install-player
+    (
+        (makedir #drawer (infos))
+        (copyfiles
+            (prompt "Copying Kinora, its icon and its font...")
+            (help @copyfiles-help)
+            (source (tackon #archive "Kinora"))
+            (dest #drawer)
+            (all)
+            (optional "force")
+        )
+        (P_copyver (tackon #archive "LIBS/demuxer.library") "LIBS:" "demuxer.library")
+        (P_copyver (tackon #archive "LIBS/audiocodec.library") "LIBS:" "audiocodec.library")
+        (if (NOT (exists "LIBS:audiocodec" (noreq))) (makedir "LIBS:audiocodec"))
+        (P_copyver (tackon #archive "LIBS/audiocodec/ffmpegaudio.codec") "LIBS:audiocodec" "ffmpegaudio.codec")
+        ; its name until Kinora 0.2: audiocodec.library would load the old one beside it, and take it on a tie
+        (if (exists "LIBS:audiocodec/ffmpeg.codec" (noreq)) (delete "LIBS:audiocodec/ffmpeg.codec" (optional "force")))
+    )
 )
 
-(complete 50)
+(complete 40)
 
-(P_copyver (tackon #archive "LIBS/demuxer.library") "LIBS:" "demuxer.library")
-(P_copyver (tackon #archive "LIBS/audiocodec.library") "LIBS:" "audiocodec.library")
-(if (NOT (exists "LIBS:audiocodec" (noreq))) (makedir "LIBS:audiocodec"))
-(P_copyver (tackon #archive "LIBS/audiocodec/ffmpeg.codec") "LIBS:audiocodec" "ffmpeg.codec")
+; The video libraries: videocodec.library, its codec drivers in LIBS:videocodec/
+; (videocore.codec on the VideoCore; rpivid.codec on the HEVC block of a Pi 4
+; or CM4, copied on every machine: a Pi 3 has none, and there an H.265 video
+; does not open, nothing else changes; ffmpegvideo.codec, Kinora's own, on the
+; 68k) and VCInfo, kept in step with them.
+(if #install-video
+    (
+        (P_copyver (tackon #archive "LIBS/videocodec.library") "LIBS:" "videocodec.library")
+        (if (NOT (exists "LIBS:videocodec" (noreq))) (makedir "LIBS:videocodec"))
+        (P_copyver (tackon #archive "LIBS/videocodec/videocore.codec") "LIBS:videocodec" "videocore.codec")
+        (P_copyver (tackon #archive "LIBS/videocodec/rpivid.codec") "LIBS:videocodec" "rpivid.codec")
+        (P_copyver (tackon #archive "LIBS/videocodec/ffmpegvideo.codec") "LIBS:videocodec" "ffmpegvideo.codec")
+        (P_copyver (tackon #archive "C/VCInfo") "C:" "VCInfo")
+    )
+)
+
+(complete 60)
+
+; vcjpeg.datatype: the class, and its descriptor in SYS:Storage/DataTypes, not
+; DEVS:DataTypes.  datatypes.library tries, among the descriptors with a function
+; and no mask, the one added last first, so VCJPEG must be added after the
+; system's JPEG descriptors: from S:User-Startup, which runs after
+; Startup-Sequence's AddDataTypes REFRESH.  Removing the line restores them.
+(if #install-vcjpeg
+    (
+        (P_copyver (tackon #archive "Classes/DataTypes/vcjpeg.datatype") "SYS:Classes/DataTypes" "vcjpeg.datatype")
+        (if (NOT (exists "SYS:Storage/DataTypes" (noreq))) (makedir "SYS:Storage/DataTypes"))
+        (copyfiles
+            (prompt "Installing the VCJPEG descriptor...")
+            (help @copyfiles-help)
+            (source (tackon #archive "Storage/DataTypes/VCJPEG"))
+            (dest "SYS:Storage/DataTypes")
+            (optional "force")
+        )
+        (startup "vcjpeg.datatype"
+            (prompt
+                (cat
+                    "vcjpeg.datatype takes JPEG pictures once its\n"
+                    "descriptor is added at boot, after the\n"
+                    "system's.  Add this line to S:User-Startup?\n\n"
+                    "AddDataTypes SYS:Storage/DataTypes/VCJPEG QUIET"
+                )
+            )
+            (help @startup-help)
+            (command "AddDataTypes SYS:Storage/DataTypes/VCJPEG QUIET")
+        )
+    )
+)
+
+(complete 75)
+
+; VCGrab: a commodity, so it goes with the others; its icon only when there is
+; none, so that edited tooltypes stay.
+(if #install-vcgrab
+    (
+        (if (NOT (exists "SYS:Tools/Commodities" (noreq))) (makedir "SYS:Tools/Commodities"))
+        (P_copyver (tackon #archive "Tools/Commodities/VCGrab") "SYS:Tools/Commodities" "VCGrab")
+        (if (NOT (exists "SYS:Tools/Commodities/VCGrab.info" (noreq)))
+            (copyfiles
+                (prompt "Installing VCGrab's icon...")
+                (help @copyfiles-help)
+                (source (tackon #archive "Tools/Commodities/VCGrab.info"))
+                (dest "SYS:Tools/Commodities")
+            )
+        )
+    )
+)
 
 (complete 90)
 
 (if #install-tools
-    (copyfiles
-        (prompt "Copying DMXInfo and ACInfo to C:...")
-        (help @copyfiles-help)
-        (source (tackon #archive "C"))
-        (dest "C:")
-        (all)
-        (optional "force")
+    (
+        (copyfiles
+            (prompt "Copying FilmInfo to C:...")
+            (help @copyfiles-help)
+            (source (tackon #archive "C"))
+            (dest "C:")
+            (choices "FilmInfo")
+            (optional "force")
+        )
+        ; the tools FilmInfo took over: DMXInfo and ACInfo until 0.1, VCDecode in test builds of 0.2
+        (if (exists "C:DMXInfo" (noreq)) (delete "C:DMXInfo" (optional "force")))
+        (if (exists "C:ACInfo" (noreq)) (delete "C:ACInfo" (optional "force")))
+        (if (exists "C:VCDecode" (noreq)) (delete "C:VCDecode" (optional "force")))
     )
 )
 
@@ -244,19 +366,23 @@
 ; Done
 ; ---------------------------------------------------------------------------
 
-(set #done-msg
-    (cat
-        "Kinora " #kinora-version "\n"
-        "is installed in " #drawer "\n\n"
-        "Start it from its icon, or drop films on it.\n"
-    )
-)
-(if (<> #missing "")
+(set #done-msg "")
+(if #install-player
     (set #done-msg
-        (cat #done-msg
-            "\nStill needed before films play:\n"
-            #missing
+        (cat
+            "Kinora " #kinora-version "\n"
+            "is installed in " #drawer "\n\n"
+            "Start it from its icon, or drop films on it.\n"
         )
+    )
+    (set #done-msg (cat "Kinora " #kinora-version ": the parts chosen are installed.\n"))
+)
+; One page at most: what is still missing takes the place of the hints.
+(if (<> #missing "")
+    (set #done-msg (cat #done-msg "Still needed before films play:\n" #missing))
+    (
+        (if #install-video (set #done-msg (cat #done-msg "\nVCInfo in a shell checks the video libraries.\n")))
+        (if #install-vcgrab (set #done-msg (cat #done-msg "VCGrab is in SYS:Tools/Commodities.\n")))
     )
 )
 (set #done-msg (cat #done-msg "\nSee the ReadMe for the keys and the menus."))
