@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(kinora VERSION 0.2 LANGUAGES C)
+project(kinora VERSION 0.2 LANGUAGES C ASM) # ASM: emu68-common's memory functions, in every FFmpeg binary (ffmpeg/)
 # The one version of the repository: every binary reports it. Bump it here only.
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)

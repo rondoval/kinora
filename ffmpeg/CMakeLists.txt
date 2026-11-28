@@ -41,6 +41,17 @@ if(KINORA_FFMPEG_PGO STREQUAL "GENERATE")
     target_compile_definitions(kinora_ffmpeg_library PUBLIC KINORA_PGO_GENERATE)
 endif()
 
+# emu68-common's memcpy, memmove and memset in every library that carries FFmpeg, in place of
+# libnix's, which call Exec's CopyMem() through the library vector for every copy: these are
+# shaped for the Emu68 JIT (longword loops for short copies, 64-byte movem.l blocks for long
+# ones, branches that keep a translated block whole) and were measured.  Objects, linked
+# ahead of every library, so which ones the binaries take does not hang on the link's order.
+add_library(kinora_ffmpeg_memory OBJECT
+    ${CMAKE_SOURCE_DIR}/external/emu68-common/src/memcpy_movem.S
+    ${CMAKE_SOURCE_DIR}/external/emu68-common/src/memmove_movem.S
+    ${CMAKE_SOURCE_DIR}/external/emu68-common/src/memset_movem.S
+)
+
 # The patched copy of the source the configurations build from. It is made again when
 # the submodule moves to another commit or a patch changes.
 set(KINORA_FFMPEG_COPY_STAMP "${KINORA_FFMPEG_BUILD}/source/.kinora-stamp")
@@ -96,10 +107,12 @@ kinora_ffmpeg(demuxer avformat avcodec avutil)
 kinora_ffmpeg(audio avcodec swresample avutil)
 kinora_ffmpeg(video avcodec avutil)
 
-# kinora_ffmpeg_binary(<target>): what a library carrying FFmpeg adds in a profile-generating
-# build: the profile writer and its private call (amiga_library.h), libnix's constructor
-# runner, through which the profiling code registers, and libgcov's stream writer.
+# kinora_ffmpeg_binary(<target>): what every library carrying FFmpeg adds: emu68-common's
+# memory functions (kinora_ffmpeg_memory); in a profile-generating build the profile writer and
+# its private call (amiga_library.h), libnix's constructor runner, through which the
+# profiling code registers, and libgcov's stream writer.
 function(kinora_ffmpeg_binary target)
+    target_sources(${target} PRIVATE $<TARGET_OBJECTS:kinora_ffmpeg_memory>)
     if(KINORA_FFMPEG_PGO STREQUAL "GENERATE")
         target_compile_definitions(${target} PRIVATE KINORA_PGO_GENERATE)
         target_sources(${target} PRIVATE "${CMAKE_SOURCE_DIR}/ffmpeg/pgo_dump.c")
