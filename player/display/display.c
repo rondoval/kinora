@@ -6,6 +6,7 @@
  */
 #include <string.h>
 #include <exec/memory.h>
+#include <graphics/modeid.h>
 #include <proto/exec.h>
 #include <proto/Picasso96.h>
 #include <proto/videocodec.h>
@@ -54,6 +55,19 @@ RGBFTYPE format_to_p96(ULONG format)
 		if (pixel_formats[i].format == format)
 			return pixel_formats[i].p96;
 	return RGBFB_NONE;
+}
+
+/**
+ * display_mode_usable() - Whether the full screen can be in a screen mode.
+ * @mode: the mode's display ID
+ *
+ * Return: TRUE for a Picasso96 mode whose pixel format the converter writes;
+ * FALSE for any other, and for one that does not exist (any more).
+ */
+BOOL display_mode_usable(ULONG mode)
+{
+	return mode != (ULONG)INVALID_ID && p96GetModeIDAttr(mode, P96IDA_ISP96) &&
+	       format_from_p96((RGBFTYPE)p96GetModeIDAttr(mode, P96IDA_RGBFORMAT)) != VCF_Unknown;
 }
 
 /**

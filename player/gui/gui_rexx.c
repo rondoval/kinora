@@ -23,7 +23,8 @@
 #define RESULT_SIZE 2048       /* an answer, with its NUL: STATISTICS's is the longest */
 #define WORD_SIZE 32           /* a command's name, with its NUL */
 #define LIST_LINE_MOST 128     /* the most a line of TRACKS or CHAPTERS takes, with its NUL */
-#define FILM_LINE_EXTRA 4      /* a line of PLAYLIST beyond its path: the mark, a space, the newline, the NUL */
+#define FILM_LINE_EXTRA 4      /* a line of PLAYLIST or RECENT beyond its path: the mark, a space, the newline, the NUL */
+#define MODE_TEXT_SIZE 16      /* a screen mode as SCREENMODE answers it, with its NUL */
 #define MICROSECONDS_PER_MS 1000
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof((array)[0]))
 
@@ -110,8 +111,7 @@ static void run_seek(struct gui *gui, const char *argument, char *result)
 static void run_open(struct gui *gui, const char *argument, char *result)
 {
 	(void)result;
-	playlist_clear(&gui->playlist);
-	film_add(gui, (CONST_STRPTR)argument, TRUE);
+	film_open(gui, (CONST_STRPTR)argument);
 }
 
 /**
@@ -146,6 +146,7 @@ static void run_subtitles(struct gui *gui, const char *argument, char *result)
 static void run_font(struct gui *gui, const char *argument, char *result)
 {
 	sprintf(result, "%ld", (long)font_set(gui, (CONST_STRPTR)argument));
+	settings_window_show(gui);
 }
 
 /**
@@ -187,7 +188,7 @@ static void run_next(struct gui *gui, const char *argument, char *result)
 {
 	(void)argument;
 	(void)result;
-	film_play(gui, gui->playlist.current + 1);
+	film_play(gui, playlist_next(&gui->playlist));
 }
 
 /**
@@ -200,7 +201,7 @@ static void run_previous(struct gui *gui, const char *argument, char *result)
 {
 	(void)argument;
 	(void)result;
-	film_play(gui, gui->playlist.current - 1);
+	film_play(gui, playlist_previous(&gui->playlist));
 }
 
 /**
@@ -233,7 +234,8 @@ static void run_quit(struct gui *gui, const char *argument, char *result)
  * run_status() - STATUS: what the player is doing.
  * @gui:      the front
  * @argument: unused
- * @result:   gets "state position_ms duration_ms width height shown dropped error fullscreen"
+ * @result:   gets "state position_ms duration_ms width height shown dropped error fullscreen pointer": pointer 1 while the
+ *            full screen shows the pointer (the film not playing)
  */
 static void run_status(struct gui *gui, const char *argument, char *result)
 {
@@ -241,9 +243,9 @@ static void run_status(struct gui *gui, const char *argument, char *result)
 	struct engine_status status;
 	engine_status(gui->engine, &status);
 	long duration = status.duration != VC_TIME_UNKNOWN ? (long)(status.duration / MICROSECONDS_PER_MS) : -1;
-	sprintf(result, "%s %ld %ld %lu %lu %lu %lu %ld %d", state_words[status.state], (long)(status.position / MICROSECONDS_PER_MS),
+	sprintf(result, "%s %ld %ld %lu %lu %lu %lu %ld %d %d", state_words[status.state], (long)(status.position / MICROSECONDS_PER_MS),
 	        duration, (unsigned long)status.width, (unsigned long)status.height, (unsigned long)status.frames_shown,
-	        (unsigned long)status.frames_dropped, (long)status.error, gui->screen != NULL);
+	        (unsigned long)status.frames_dropped, (long)status.error, gui->screen != NULL, gui->screen != NULL && !gui->film_playing);
 }
 
 /**
@@ -314,10 +316,8 @@ static void run_subtitle(struct gui *gui, const char *argument, char *result)
 static void run_unit(struct gui *gui, const char *argument, char *result)
 {
 	(void)result;
-	gui->settings.audio_unit = (ULONG)strtol(argument, NULL, 10);
-	gui->settings.shared = strstr(argument, "SHARED") != NULL || strstr(argument, "shared") != NULL;
-	engine_audio_unit(gui->engine, gui->settings.audio_unit, gui->settings.shared);
-	menus_make(gui);
+	unit_set(gui, (ULONG)strtol(argument, NULL, 10), strstr(argument, "SHARED") != NULL || strstr(argument, "shared") != NULL);
+	settings_window_show(gui);
 }
 
 /**
@@ -380,17 +380,138 @@ static void run_chapters(struct gui *gui, const char *argument, char *result)
 }
 
 /**
- * run_playlist() - PLAYLIST: the films, the open one marked.
+ * playlist_change() - Change the playlist as one of PLAYLIST's words says, as the playlist window's buttons do.
  * @gui:      the front
- * @argument: unused
+ * @argument: SHOW, HIDE, CLEAR, or REMOVE, UP or DOWN and a film's number, the first 1; anything else changes nothing
+ */
+static void playlist_change(struct gui *gui, const char *argument)
+{
+	char *number = strchr(argument, ' ');
+	ULONG film = number != NULL ? (ULONG)strtol(number, NULL, 10) - 1 : (ULONG)-1; /* past any end without a number */
+	if (stricmp(argument, "SHOW") == 0)
+		playlist_window_open(gui);
+	else if (stricmp(argument, "HIDE") == 0)
+		playlist_window_close(gui);
+	else if (stricmp(argument, "CLEAR") == 0)
+		playlist_clear(&gui->playlist);
+	else if (strnicmp(argument, "REMOVE ", strlen("REMOVE ")) == 0)
+		playlist_remove(&gui->playlist, film);
+	else if (strnicmp(argument, "UP ", strlen("UP ")) == 0 || strnicmp(argument, "DOWN ", strlen("DOWN ")) == 0)
+		playlist_move(&gui->playlist, film, toupper((unsigned char)argument[0]) == 'U' ? -1 : 1);
+}
+
+/**
+ * run_playlist() - PLAYLIST [SHOW|HIDE|CLEAR|REMOVE n|UP n|DOWN n]: the films, the open one marked; with a word, the
+ *                  playlist window shown or hidden, or the playlist changed first.
+ * @gui:      the front
+ * @argument: nothing, or the word; n counts the films from 1
  * @result:   gets a line a film: "* path" for the open one, "- path" for the others
  */
 static void run_playlist(struct gui *gui, const char *argument, char *result)
 {
-	(void)argument;
+	playlist_change(gui, argument);
+	const struct playlist *playlist = &gui->playlist;
 	size_t used = 0;
-	for (ULONG i = 0; i < gui->playlist.count && used + strlen(gui->playlist.films[i]) + FILM_LINE_EXTRA <= RESULT_SIZE; i++)
-		used += (size_t)sprintf(result + used, "%c %s\n", i == gui->playlist.current ? '*' : '-', gui->playlist.films[i]);
+	for (ULONG i = 0; i < playlist->count && used + strlen(playlist->films[i]) + FILM_LINE_EXTRA <= RESULT_SIZE; i++)
+		used += (size_t)sprintf(result + used, "%c %s\n", i == playlist->current && !playlist->open_gone ? '*' : '-', playlist->films[i]);
+}
+
+/**
+ * run_recent() - RECENT [n]: the recent films, newest first; with a number, that one played in place of the playlist.
+ * @gui:      the front
+ * @argument: nothing, or the film's number, the newest 1
+ * @result:   gets a line a film: its path, as the films were before it played
+ */
+static void run_recent(struct gui *gui, const char *argument, char *result)
+{
+	const struct settings *settings = &gui->settings;
+	size_t used = 0;
+	for (ULONG i = 0; i < SETTINGS_RECENT && settings->recent[i][0] != 0 && used + strlen(settings->recent[i]) + FILM_LINE_EXTRA <= RESULT_SIZE; i++)
+		used += (size_t)sprintf(result + used, "%s\n", settings->recent[i]);
+	ULONG film = argument[0] != 0 ? (ULONG)strtol(argument, NULL, 10) - 1 : SETTINGS_RECENT;
+	if (film < SETTINGS_RECENT && settings->recent[film][0] != 0)
+		film_open(gui, (CONST_STRPTR)settings->recent[film]);
+}
+
+/**
+ * percent_of() - The number a command's argument names, or the one in use.
+ * @argument: the number, or nothing
+ * @now:      the one in use
+ *
+ * Return: the number.
+ */
+static ULONG percent_of(const char *argument, ULONG now)
+{
+	return argument[0] != 0 ? (ULONG)strtol(argument, NULL, 10) : now;
+}
+
+/**
+ * run_subtitle_size() - SUBTITLESIZE [percent]: the subtitles' size, in percent of the normal one; with a number, set
+ *                       first (within 50 and 200).
+ * @gui:      the front
+ * @argument: nothing, or the size
+ * @result:   gets the size in use
+ */
+static void run_subtitle_size(struct gui *gui, const char *argument, char *result)
+{
+	look_set(gui, percent_of(argument, gui->settings.subtitle_size), gui->settings.subtitle_distance);
+	sprintf(result, "%lu", (unsigned long)gui->settings.subtitle_size);
+	settings_window_show(gui);
+}
+
+/**
+ * run_subtitle_distance() - SUBTITLEDISTANCE [percent]: the subtitles' gap from the frame's edge, in percent of its
+ *                           rows; with a number, set first (up to 30).
+ * @gui:      the front
+ * @argument: nothing, or the distance
+ * @result:   gets the distance in use
+ */
+static void run_subtitle_distance(struct gui *gui, const char *argument, char *result)
+{
+	look_set(gui, gui->settings.subtitle_size, percent_of(argument, gui->settings.subtitle_distance));
+	sprintf(result, "%lu", (unsigned long)gui->settings.subtitle_distance);
+	settings_window_show(gui);
+}
+
+/**
+ * run_screen_mode() - SCREENMODE [WORKBENCH|id]: the full screen's mode; with a word, the Workbench's or a display ID
+ *                     taken first (one the full screen cannot be in is refused).
+ * @gui:      the front
+ * @argument: nothing, WORKBENCH, or the ID (0x for hexadecimal)
+ * @result:   gets "setting mode": the setting, WORKBENCH or the ID chosen, and the mode the full screen opens in
+ */
+static void run_screen_mode(struct gui *gui, const char *argument, char *result)
+{
+	if (stricmp(argument, "WORKBENCH") == 0)
+		gui->settings.screen_mode = SETTINGS_WORKBENCH_MODE;
+	else if (argument[0] != 0 && display_mode_usable((ULONG)strtoul(argument, NULL, 0)))
+		gui->settings.screen_mode = (ULONG)strtoul(argument, NULL, 0);
+	char setting[MODE_TEXT_SIZE] = "WORKBENCH";
+	if (gui->settings.screen_mode != SETTINGS_WORKBENCH_MODE)
+		sprintf(setting, "0x%08lx", (unsigned long)gui->settings.screen_mode);
+	sprintf(result, "%s 0x%08lx", setting, (unsigned long)full_screen_mode(gui));
+	settings_window_show(gui);
+}
+
+/**
+ * run_settings() - SETTINGS [SAVE|CANCEL]: open the settings window; with a word, do what its button does.
+ * @gui:      the front
+ * @argument: nothing, SAVE (keep the settings for later runs, close the window) or CANCEL (put back what the window
+ *            opened with, close it)
+ * @result:   gets 1 while the window is open, else 0
+ */
+static void run_settings(struct gui *gui, const char *argument, char *result)
+{
+	if (stricmp(argument, "SAVE") == 0)
+	{
+		settings_save(&gui->settings);
+		settings_window_close(gui, TRUE);
+	}
+	else if (stricmp(argument, "CANCEL") == 0)
+		settings_window_close(gui, FALSE);
+	else
+		settings_window_open(gui);
+	sprintf(result, "%d", gui->settings_window.window != NULL);
 }
 
 /* The commands, by their word */
@@ -420,6 +541,11 @@ static const struct rexx_command commands[] = {
     {"FONT",       run_font},
     {"STATISTICS", run_statistics},
     {"SIZE",       run_size},
+    {"RECENT",     run_recent},
+    {"SUBTITLESIZE", run_subtitle_size},
+    {"SUBTITLEDISTANCE", run_subtitle_distance},
+    {"SCREENMODE", run_screen_mode},
+    {"SETTINGS",   run_settings},
 };
 
 /**

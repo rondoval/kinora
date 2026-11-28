@@ -19,8 +19,16 @@
   `ffmpeg.codec`.
 - **The statistics (key I)** name the codec drivers in use and fit smaller windows.
 - **Project > Close** empties the player and keeps the playlist (ARexx: `CLOSE`).
-- **`FilmInfo` replaces `DMXInfo` and `ACInfo`,** and can also test-decode a film's video.
-  The Installer removes the old tools.
+- **A settings window (Project > Settings...)** holds the AHI unit and sharing it, the
+  subtitles' font, their size and distance from the picture's foot, and the full screen's
+  screen mode (the Workbench's, or one you choose). Save keeps them, Cancel puts them back;
+  the Audio and Subtitles menus now list only the film's tracks.
+- **A playlist window (L):** play, remove, move and add films there; the Playlist menu no
+  longer lists them.
+- **Project > Open recent** plays one of the last five films.
+- **`FilmInfo` replaces `DMXInfo` and `ACInfo`,** and can also test-decode a film's video:
+  `PACKETS n` decodes only the first n packets, and Ctrl-C stops a decode and prints what
+  came out. The Installer removes the old tools.
 - **If you use Executive,** the ReadMe's `TASK Kinora* NOSCHEDULE` line covers the new
   decoder too.
 

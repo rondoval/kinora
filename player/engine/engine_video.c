@@ -21,11 +21,16 @@
 #define INPUT_PACKETS 8u  /* the decoder's input packets asked for: fewer than FREE_PACKETS */
 #define ITEMS_A_PASS 64u  /* VC_Poll() items taken in one pass, so a busy decoder cannot keep the engine from its commands */
 
-/* Skipping while the decoder falls behind (architecture 6.3), in microseconds of clock_wall() */
-#define SKIP_STEP_GAP 2000000      /* a step up at most this often */
-#define SKIP_HOLD_FIRST 10000000   /* this long without a dropped picture takes a step back */
-#define SKIP_HOLD_MOST 160000000   /* the longest that wait grows to */
-#define SKIP_RELAPSE 5000000       /* drops this soon after a step back double the wait */
+/* Skipping while the decoder falls behind (architecture 6.3), in microseconds of clock_wall() or of the film */
+#define SKIP_CALM 3000000          /* after the engine upset the pictures' flow itself, drops this soon do not count */
+#define SKIP_WINDOW 2000000        /* drops are counted over this long */
+#define SKIP_DROPS 4u              /* this many counted in a window step skipping up */
+#define SKIP_STEP_GAP 2000000      /* from decoding everything, a step up at most this often */
+#define SKIP_KEYS_AFTER 6000000    /* from leaving out B-pictures, a step to key frames only after this long at least */
+#define SKIP_KEY_GAP_MOST 2000000  /* key frames only where the film's key frames come at least this often */
+#define SKIP_HOLD_FIRST 5000000    /* this long without a dropped picture takes a step back */
+#define SKIP_HOLD_MOST 40000000    /* the longest that wait grows to */
+#define SKIP_RELAPSE 5000000       /* drops this soon after a step back double the wait; a step back that holds this long halves it */
 
 /**
  * ready_release() - Give every waiting picture back to the decoder unshown.
@@ -51,44 +56,121 @@ static void skip_set(struct engine *engine)
 }
 
 /**
- * skip_reset() - Start a film decoding every picture.
+ * skip_reset() - Start a film decoding every picture, its first seconds calm.
  * @engine: the engine
  */
 static void skip_reset(struct engine *engine)
 {
-	engine->skip = (struct video_skip){.level = VCSK_None, .changed = clock_wall(), .hold = SKIP_HOLD_FIRST};
+	VCTime now = clock_wall();
+	engine->skip = (struct video_skip){
+	    .level = VCSK_None,
+	    .changed = now,
+	    .hold = SKIP_HOLD_FIRST,
+	    .calm_until = now + SKIP_CALM,
+	    .drops_since = now,
+	    .key_last = VC_TIME_UNKNOWN,
+	};
 }
 
 /**
- * skip_more() - A picture was dropped: ask the decoder to leave more out, a step at most every SKIP_STEP_GAP.
+ * video_calm() - The engine upset the pictures' flow itself: the drops of the next SKIP_CALM do not make the decoder skip.
  * @engine: the engine
  *
- * A step up soon after a step back doubles the wait before the next one, so that a film the
- * machine cannot play whole settles at the level it can.
+ * A new place (a window's new size, the full screen, its strip) makes the
+ * display and the converter anew, a move or a pause restarts the clock: the
+ * pictures late meanwhile say nothing of whether the decoder keeps up.
+ * They are still counted as dropped.
+ */
+void video_calm(struct engine *engine)
+{
+	engine->skip.calm_until = clock_wall() + SKIP_CALM;
+}
+
+/**
+ * key_note() - Note a key frame going to the decoder: the gap since the one before is the film's longest yet, or not.
+ * @engine: the engine
+ * @time:   the key frame's time
+ */
+static void key_note(struct engine *engine, VCTime time)
+{
+	struct video_skip *skip = &engine->skip;
+	if (time == VC_TIME_UNKNOWN)
+		return;
+	if (skip->key_last != VC_TIME_UNKNOWN && time > skip->key_last && time - skip->key_last > skip->key_gap_most)
+		skip->key_gap_most = time - skip->key_last;
+	skip->key_last = time;
+}
+
+/**
+ * skip_step_due() - Whether the decoder may be asked to leave more out now.
+ * @skip: the skipping
+ * @now:  clock_wall()
+ *
+ * Leaving out the B-pictures may follow SKIP_STEP_GAP after the last step.
+ * Key frames only is the last resort: SKIP_KEYS_AFTER of leaving out the
+ * B-pictures first, and only for a film whose key frames come at least
+ * every SKIP_KEY_GAP_MOST, since otherwise it would show a still picture
+ * for seconds at a time.
+ *
+ * Return: TRUE if it may.
+ */
+static BOOL skip_step_due(const struct video_skip *skip, VCTime now)
+{
+	if (skip->level == VCSK_None)
+		return now - skip->changed >= SKIP_STEP_GAP;
+	BOOL keys_dense = skip->key_gap_most != 0 && skip->key_gap_most <= SKIP_KEY_GAP_MOST;
+	return skip->level == VCSK_NonReference && keys_dense && now - skip->changed >= SKIP_KEYS_AFTER;
+}
+
+/**
+ * skip_more() - A picture was dropped: when drops come thick, ask the decoder to leave more out.
+ * @engine: the engine
+ *
+ * A drop while the engine is calm does not count (video_calm()).  A step
+ * up takes SKIP_DROPS counted within SKIP_WINDOW, and is due as
+ * skip_step_due() says.  A step up soon after a step back doubles the wait
+ * before the next step back, so that a film the machine cannot play whole
+ * settles at the level it can.
  */
 static void skip_more(struct engine *engine)
 {
 	struct video_skip *skip = &engine->skip;
 	VCTime now = clock_wall();
+	if (now < skip->calm_until)
+		return;
 	skip->last_drop = now;
-	if (skip->level >= VCSK_NonKey || now - skip->changed < SKIP_STEP_GAP)
+	if (now - skip->drops_since > SKIP_WINDOW)
+	{
+		skip->drops_since = now;
+		skip->drops = 0;
+	}
+	if (++skip->drops < SKIP_DROPS || !skip_step_due(skip, now))
 		return;
 	if (skip->lowered != 0 && now - skip->lowered < SKIP_RELAPSE)
 		skip->hold = skip->hold * 2 < SKIP_HOLD_MOST ? skip->hold * 2 : SKIP_HOLD_MOST;
 	skip->level++;
 	skip->changed = now;
 	skip->lowered = 0;
+	skip->drops = 0;
+	skip->drops_since = now;
 	skip_set(engine);
 }
 
 /**
  * skip_less() - After its wait without a dropped picture, ask the decoder to leave less out.
  * @engine: the engine, its decoder open
+ *
+ * A step back that holds SKIP_RELAPSE halves the wait again, down to SKIP_HOLD_FIRST.
  */
 static void skip_less(struct engine *engine)
 {
 	struct video_skip *skip = &engine->skip;
 	VCTime now = clock_wall();
+	if (skip->lowered != 0 && now - skip->lowered >= SKIP_RELAPSE)
+	{
+		skip->hold = skip->hold / 2 > SKIP_HOLD_FIRST ? skip->hold / 2 : SKIP_HOLD_FIRST;
+		skip->lowered = 0;
+	}
 	VCTime since = skip->changed > skip->last_drop ? skip->changed : skip->last_drop;
 	if (skip->level == VCSK_None || now - since < skip->hold)
 		return;
@@ -200,6 +282,8 @@ void video_attach(struct engine *engine)
  * video_place() - Show the pictures in another place.
  * @engine: the engine
  * @place:  the place, NULL for nowhere
+ *
+ * The pictures late meanwhile do not make the decoder skip (video_calm()).
  */
 void video_place(struct engine *engine, const struct display_place *place)
 {
@@ -209,6 +293,7 @@ void video_place(struct engine *engine, const struct display_place *place)
 	display_close(engine->display);
 	engine->display = display_open(place, FindTask(NULL), 1UL << engine->video_signal);
 	engine->decoder_sized = FALSE;
+	video_calm(engine);
 	if (engine->video_decoder != NULL && engine->video_shape.Crop.Width != 0)
 		video_attach(engine);
 }
@@ -300,6 +385,8 @@ static void piece_send(struct engine *engine, const struct DMXPacket *from)
 	ULONG left = from->Length - engine->head_sent_bytes;
 	ULONG piece = left < packet->Capacity ? left : packet->Capacity;
 
+	if (engine->head_sent_bytes == 0 && (from->Flags & DMXPF_KeyFrame) != 0)
+		key_note(engine, from->Pts);
 	memcpy(packet->Data, (const UBYTE *)from->Data + engine->head_sent_bytes, piece);
 	packet->Length = piece;
 	packet->Pts = from->Pts;
@@ -489,6 +576,8 @@ void video_pump(struct engine *engine)
 /**
  * video_flush() - Drop what the decoder holds, for a seek.
  * @engine: the engine
+ *
+ * The pictures late after the move do not make the decoder skip (video_calm()).
  */
 void video_flush(struct engine *engine)
 {
@@ -500,4 +589,6 @@ void video_flush(struct engine *engine)
 	engine->video_done = FALSE;
 	engine->first_shown = FALSE;
 	engine->catching_up = TRUE;
+	engine->skip.key_last = VC_TIME_UNKNOWN; /* the next key frame does not follow the last one sent */
+	video_calm(engine);
 }

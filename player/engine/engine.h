@@ -110,6 +110,7 @@ LONG engine_select(struct engine *engine, enum engine_track_kind kind, LONG stre
 void engine_audio_unit(struct engine *engine, ULONG unit, BOOL shared);
 LONG engine_subtitle_file(struct engine *engine, CONST_STRPTR name);
 LONG engine_subtitle_font(struct engine *engine, CONST_STRPTR name);
+void engine_subtitle_look(struct engine *engine, ULONG size, ULONG distance);
 void engine_statistics(struct engine *engine, BOOL panel, char *text, ULONG room);
 void engine_end(struct engine *engine);
 LONG engine_open(struct engine *engine, CONST_STRPTR name, const struct display_place *place);

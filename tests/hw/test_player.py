@@ -84,6 +84,20 @@ def likeness(shape: np.ndarray, text: str, font: Path = FONT, slant: float = 0.0
     return float((host & shape).sum()) / float((host | shape).sum())
 
 
+def windows(device) -> list[str]:
+    """The titles of the frontmost screen's windows."""
+    return [found.group(5) for line in device.ami.ui_tree().splitlines() if (found := screen.WINDOW_RE.match(line))]
+
+
+def text_rows(shot: np.ndarray, without: np.ndarray) -> np.ndarray:
+    """The rows of @shot that hold subtitle text: bright pixels that are not in @without, the same place with the
+    subtitles off."""
+    text = (np.abs(shot - without).max(axis=2) > 40) & (shot.min(axis=2) >= BRIGHT)
+    rows = np.flatnonzero(text.sum(axis=1) > 3)
+    assert rows.size > 8, "no text"
+    return rows
+
+
 @contextlib.contextmanager
 def settings_kept(device):
     """The settings file as it was, put back when the block ends."""
@@ -432,11 +446,16 @@ def test_full_screen_and_back(player, material):
     assert abs(moved - 4000) < 500 and shown >= 4 * films.FRAME_RATE - 10
 
 
+def screen_size(device) -> tuple[int, int]:
+    """The front screen's width and height, as the agent's tree of the user interface says them."""
+    return next(tuple(int(n) for n in line.split()[2].split("x")) for line in device.ami.ui_tree().splitlines()
+                if line.startswith("S "))
+
+
 def test_the_full_screen_controls_are_in_every_part(player, device, material):
     """A move of the pointer brings the controls up along the full screen's foot.  The picture goes on being flipped
     between the screen's parts, so each part must carry the controls' rows, and the film keeps its rate."""
-    width, height = next((int(n) for n in line.split()[2].split("x")) for line in device.ami.ui_tree().splitlines()
-                         if line.startswith("S "))
+    width, height = screen_size(device)
     player.start(material.ram(films.FILM))
     player.playing_at(1000)
     assert player.rexx("FULLSCREEN") == "1"
@@ -456,6 +475,28 @@ def test_the_full_screen_controls_are_in_every_part(player, device, material):
     device.ami.input_move(800, height // 2)
     moved, shown = advance(player, 2)
     assert abs(moved - 2000) < 500 and shown >= 2 * films.FRAME_RATE * 3 // 5, f"with the controls up: {moved} ms, {shown} pictures in 2 s"
+    assert player.rexx("FULLSCREEN") == "0"
+
+
+def test_the_full_screen_pointer_shows_only_while_the_film_stands_still(player, device, material):
+    """In full screen the pointer stays hidden while the film plays, the controls up or not: the picture flips under
+    it, and VideoCore.card would move it a blank after the picture. Paused, it shows, and stays when the controls go."""
+    _, height = screen_size(device)
+    player.start(material.ram(films.FILM))
+    player.playing_at(1000)
+    assert player.rexx("FULLSCREEN") == "1"
+    time.sleep(1)
+    device.ami.input_move(700, height // 2)                     # the controls come up
+    time.sleep(1)
+    assert not player.status().pointer, "the pointer shows while the film plays"
+    player.rexx("PAUSE")
+    device.ami.input_move(720, height // 2)                     # the controls stay up
+    player.wait_for(lambda s: s.pointer, 2, "the pointer shown while the film stands still")
+    time.sleep(4)                                               # the controls go three seconds after the last move
+    assert player.status().pointer, "the pointer went with the controls, the film standing still"
+    player.rexx("PLAY")
+    device.ami.input_move(740, height // 2)
+    player.wait_for(lambda s: not s.pointer, 2, "the pointer hidden again while the film plays")
     assert player.rexx("FULLSCREEN") == "0"
 
 
@@ -512,6 +553,143 @@ def test_delays_are_taken(player, material):
     time.sleep(1)
     moved, shown = advance(player, 4)
     assert abs(moved - 4000) < 500 and shown >= 4 * films.FRAME_RATE - 10 and player.status().error == 0
+
+
+def test_subtitles_take_their_size_and_distance(player, device, material):
+    """A cue drawn at 150 % is half as tall again as at 100 %, and at a distance of 20 % from the frame's foot it
+    stands well above where it stood at 4 %; the numbers are kept within their ranges."""
+    with settings_kept(device):
+        player.start(material.ram(films.PLAIN))
+        player.playing_at(500)
+        assert player.rexx("SUBTITLESIZE 500") == "200" and player.rexx("SUBTITLEDISTANCE 99") == "30"
+        assert player.rexx("SUBTITLES " + material.ram(films.WORLD)) == "0"
+        player.rexx("SEEK 3000")
+        player.playing_at(4000)
+        player.rexx("PAUSE")
+        time.sleep(1)
+        player.rexx("SUBTITLESIZE 100")     # each change draws the paused film again from where it is: every shot
+        player.rexx("SUBTITLEDISTANCE 4")   # is of that picture, the one the pause showed perhaps not
+        time.sleep(2)
+        tall = (0.30, 0.66)                 # from above the raised cue down to the picture's foot
+        normal = subtitle_box(device, "normal", *tall).astype(int)
+        player.rexx("SUBTITLESIZE 150")     # a film that stands still is drawn again with it
+        time.sleep(2)
+        large = subtitle_box(device, "large", *tall).astype(int)
+        player.rexx("SUBTITLESIZE 100")
+        player.rexx("SUBTITLEDISTANCE 20")
+        time.sleep(2)
+        raised = subtitle_box(device, "raised", *tall).astype(int)
+        player.rexx("SUBTITLE OFF")
+        time.sleep(2)
+        without = subtitle_box(device, "without", *tall).astype(int)
+        normal_rows, large_rows, raised_rows = (text_rows(shot, without) for shot in (normal, large, raised))
+        ratio = (large_rows[-1] - large_rows[0] + 1) / (normal_rows[-1] - normal_rows[0] + 1)
+        assert 1.3 < ratio < 1.7, f"the cue at 150 % is {ratio:.2f} times as tall"
+        _, _, _, window_height = screen.window(device, "Kinora")
+        lifted = int(normal_rows[-1] - raised_rows[-1])
+        assert lifted > 0.08 * window_height, f"at 20 % the cue's foot stands {lifted} rows higher"
+        player.quit()
+
+
+def full_screen_at(player, device, width: int, why: str) -> None:
+    """The full screen opened and closed again, checked to be @width wide and a whole number of the Workbench's
+    heights tall (it is its parts tall)."""
+    _, height = screen_size(device)         # the Workbench's, in front while the picture is in the window
+    assert player.rexx("FULLSCREEN") == "1", f"{why}: no full screen"
+    time.sleep(2)
+    full_width, full_height = screen_size(device)
+    assert player.rexx("FULLSCREEN") == "0"
+    assert full_width == width and full_height % height == 0, f"{why}: a full screen of {full_width}x{full_height}"
+
+
+def test_the_full_screen_takes_the_mode_chosen_or_else_the_workbenchs(player, device, material):
+    """SCREENMODE takes the Workbench's mode or a display ID and refuses one the full screen cannot be in (a native
+    mode); the full screen opens in the mode chosen; a mode in the settings that cannot be used (gone with another
+    monitor) gives the Workbench's."""
+    width, _ = screen_size(device)
+    with settings_kept(device):
+        player.start(material.ram(films.FILM))
+        player.playing_at(1000)
+        setting, workbench = player.rexx("SCREENMODE WORKBENCH").split()
+        assert setting == "WORKBENCH"
+        assert player.rexx("SCREENMODE 0x00000000").split() == ["WORKBENCH", workbench], "a native mode was taken"
+        assert player.rexx(f"SCREENMODE {workbench}").split() == [workbench, workbench]
+        full_screen_at(player, device, width, "the mode chosen")
+        player.quit()
+        prefs = device.download_text(PREFS)
+        assert f"screenmode={workbench}" in prefs
+        gone = prefs.replace(f"screenmode={workbench}", "screenmode=0x00000000")
+        device.upload_bytes("ENV:Kinora.prefs", gone.encode("latin-1"))
+        player.start(material.ram(films.FILM))
+        player.playing_at(1000)
+        assert player.rexx("SCREENMODE").split() == ["0x00000000", workbench]
+        full_screen_at(player, device, width, "a mode that cannot be used")
+        player.quit()
+
+
+def test_the_settings_window_puts_back_on_cancel_and_saves_at_once(player, device, material):
+    """SETTINGS opens the settings window; what is changed while it is open goes back with CANCEL, SAVE writes the
+    settings at once, and the window closes either way."""
+    with settings_kept(device):
+        player.start(material.ram(films.FILM))
+        player.playing_at(1000)
+        before = player.rexx("SUBTITLESIZE"), player.rexx("SUBTITLEDISTANCE"), player.rexx("SCREENMODE")
+        setting, workbench = before[2].split()
+        assert player.rexx("SETTINGS") == "1"
+        assert "Kinora: Settings" in windows(device)
+        player.rexx("SUBTITLESIZE 150")
+        player.rexx("SUBTITLEDISTANCE 12")
+        player.rexx("SCREENMODE " + (workbench if setting == "WORKBENCH" else "WORKBENCH"))
+        assert player.rexx("SETTINGS CANCEL") == "0"
+        assert "Kinora: Settings" not in windows(device)
+        assert (player.rexx("SUBTITLESIZE"), player.rexx("SUBTITLEDISTANCE"), player.rexx("SCREENMODE")) == before
+        player.rexx("SETTINGS")
+        player.rexx("SUBTITLESIZE 120")
+        assert player.rexx("SETTINGS SAVE") == "0"
+        assert "subtitlesize=120" in device.download_text(PREFS), "Save did not write the settings"
+        player.quit()
+
+
+def test_recent_films_are_kept_newest_first_and_opened(player, device, material):
+    """Each film that starts playing goes first among the five recent ones, and one played again moves up; RECENT n
+    plays one in place of the playlist, as the Open recent menu does; the list is in the settings after the run."""
+    short, film = material.ram(films.SHORT), material.ram(films.FILM)
+    with settings_kept(device):
+        player.start(short)
+        player.playing_at(500)
+        player.rexx(f"OPEN {film}")
+        player.wait_for(lambda s: s.duration_ms > 30000 and s.state == "PLAYING", 10, "the second film playing")
+        assert player.rexx("RECENT").splitlines()[:2] == [film, short]
+        player.rexx("RECENT 2")
+        player.wait_for(lambda s: s.duration_ms < 10000 and s.state == "PLAYING", 10, "the recent film playing")
+        assert player.rexx("RECENT").splitlines()[:2] == [short, film]
+        assert player.rexx("PLAYLIST").splitlines() == [f"* {short}"]
+        player.quit()
+        recent = [line for line in device.download_text(PREFS).splitlines() if line.startswith("recent=")]
+        assert recent[:2] == [f"recent={short}", f"recent={film}"] and len(recent) <= 5
+
+
+def test_the_playlist_window_and_the_words_its_buttons_stand_for(player, device, material):
+    """PLAYLIST SHOW opens the playlist window and HIDE closes it, its place kept in the settings. Moving the open
+    film down takes its mark along; taking it out leaves it playing, unmarked, the film before its place being the
+    previous one; clearing the list leaves the film playing too."""
+    short, film = material.ram(films.SHORT), material.ram(films.FILM)
+    with settings_kept(device):
+        player.start(film, short)
+        player.playing_at(500)
+        player.rexx("PLAYLIST SHOW")
+        assert "Kinora: Playlist" in windows(device)
+        assert player.rexx("PLAYLIST DOWN 1").splitlines() == [f"- {short}", f"* {film}"]
+        assert player.rexx("PLAYLIST REMOVE 2").splitlines() == [f"- {short}"]
+        assert player.status().state == "PLAYING"
+        player.rexx("PREVIOUS")
+        player.wait_for(lambda s: s.duration_ms < 10000 and s.state == "PLAYING", 10, "the film before the place playing")
+        assert player.rexx("PLAYLIST").splitlines() == [f"* {short}"]
+        assert player.rexx("PLAYLIST CLEAR") == "" and player.status().error == 0
+        player.rexx("PLAYLIST HIDE")
+        assert "Kinora: Playlist" not in windows(device)
+        player.quit()
+        assert "playlistwindow=" in device.download_text(PREFS)
 
 
 def test_settings_are_kept(player, device, material):

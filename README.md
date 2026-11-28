@@ -36,6 +36,9 @@ one. To remove Kinora, delete its drawer, the files above and the `AddDataTypes`
 
 - AmigaOS 3.2 on a PiStorm with a Raspberry Pi 4 or CM4 under Emu68. A Pi 3 has no H.265
   decoder and is untested.
+- Emu68 1.1 built from its `1_1_wip` branch on 23 October 2026 or later (commit `7384501`), or
+  a release after that. Older builds get one kind of multiplication wrong, and several of the
+  sound decoders then fail to open: films play without sound.
 - `vchiq.device`, the link to the Pi's VideoCore, from the
   [Emu68 driver stack](https://github.com/rondoval/emu68-driver-stack) (a part of its Install
   script).
@@ -75,8 +78,13 @@ one. Files over 2 GiB play from file systems that can seek that far; PFS3 cannot
 ## Using it
 
 Start Kinora from its icon, or from a shell with films to play: `Kinora film.mkv other.mp4`.
-Drop films on the window or on the icon, or open them from the Project menu. Project > Close
-empties the player and keeps the playlist.
+Drop films on the window or on the icon, or open them from the Project menu; Project > Open
+recent plays one of the last five films. Project > Close empties the player and keeps the
+playlist.
+
+The playlist window (Playlist > Show the playlist..., or L) lists the films, the one playing
+marked. A double click or Return plays a film, Del takes it out, Up and Down move it, and
+icons dropped on the window join the list. Taken out, the film playing plays on.
 
 | Key | Does |
 |---|---|
@@ -86,24 +94,40 @@ empties the player and keeps the playlist.
 | F | full screen and back; Esc leaves it |
 | A, S | the next audio track, the next subtitle track |
 | PgUp, PgDn | the playlist's film before, the next one |
+| L | the playlist window |
 | J (with the right Amiga key) | jump to a time |
 | I | statistics in the picture's corner, and away again |
 
-In full screen the controls come up along the screen's foot when the pointer moves. Moving in
-a film lands on the key frame before the place asked for, which can be some seconds early.
+In full screen the controls come up along the screen's foot when the pointer moves; the
+pointer itself shows only while the film is paused (Space), since the picture flips under it
+while it plays. The full screen takes the Workbench's screen mode, or one chosen in the
+settings: a 50 Hz mode shows films of 25 pictures a second smoothly, and a smaller mode leaves
+fewer pixels to fill. Moving in a film lands on the key frame before the place asked for,
+which can be some seconds early.
 
 Subtitles come from the film or from a `.srt` file of the same name beside it. They are drawn
 with DejaVu Sans, which has Latin, Greek and Cyrillic letters; for other scripts choose a
-TrueType or OpenType font that has them (Subtitles menu, Font...). Scripts that join their
-letters or run from the right do not come out right.
+TrueType or OpenType font that has them in the settings. Scripts that join their letters or
+run from the right do not come out right.
 
-The Audio menu chooses the AHI unit. Kinora plays 7.1 where the unit's mode in AHI's prefs is a
-7.1 one, and stereo otherwise. While a film is loaded Kinora holds the unit's sound hardware,
-so other programs may not be heard through it. With "Share the unit with other programs"
-(Audio menu) they can, and Kinora plays 6 dB quieter; it shares the unit that way too when
-another program already holds it.
+Project > Settings... opens the settings:
 
-The unit, sharing it, the volume, the font and the last drawer are remembered.
+| Group | Sets |
+|---|---|
+| Sound | the AHI unit, and whether to share it with other programs |
+| Subtitles | the font file (the Kinora's button goes back to Kinora's own), the size (50 to 200 %), the distance from the picture's foot (0 to 30 % of its height) |
+| Full screen | the Workbench's screen mode, or one of the modes Kinora can show in |
+
+What you change shows at once; pause the film to judge the subtitles. Save keeps the settings
+for later runs, Cancel puts back the ones the window opened with.
+
+Kinora plays 7.1 where the unit's mode in AHI's prefs is a 7.1 one, and stereo otherwise.
+While a film is loaded Kinora holds the unit's sound hardware, so other programs may not be
+heard through it. Sharing the unit they can, and Kinora plays 6 dB quieter; it shares the unit
+that way too when another program already holds it.
+
+The volume, the last drawer, the recent films and the playlist window's place are remembered
+from one run to the next.
 
 ## When pictures are dropped, or a film does not play
 
@@ -134,13 +158,25 @@ decode. When the VideoCore does not answer, it sends you to the driver stack's `
 | `FilmInfo film.mkv AUDIO` | decodes the sound and says what came out |
 | `FilmInfo film.mkv VIDEO` | decodes the video as fast as it can and says what came out and how long it took |
 
+A decode goes through the whole film, which on the 68k takes as long as the film or longer:
+add `PACKETS 500` for the first 500 packets. Ctrl-C stops it and prints what came out.
+
 ## Driving it from other programs
 
 Kinora's ARexx port is `KINORA`. Its commands: `PLAY`, `PAUSE`, `STOP`, `SEEK <ms>`,
 `OPEN <file>`, `CLOSE`, `ADD <file>`, `NEXT`, `PREVIOUS`, `FULLSCREEN`, `SIZE <width> <height>`,
 `FONT <file>`, `SUBTITLES <file>`, `STATUS`, `STATISTICS`, `TRACKS`, `AUDIO`, `SUBTITLE`,
-`UNIT`, `VOLUME`, `ASPECT`, `DELAY`, `CHAPTERS`, `PLAYLIST` and `QUIT`. Answers come in
-`RESULT`.
+`UNIT`, `VOLUME`, `ASPECT`, `DELAY`, `CHAPTERS`, `QUIT`, and:
+
+| Command | Does |
+|---|---|
+| `PLAYLIST [SHOW\|HIDE\|CLEAR\|REMOVE n\|UP n\|DOWN n]` | lists the films, the one playing marked `*`; shows or hides the playlist window, or changes the list first (n counts from 1) |
+| `RECENT [n]` | lists the recent films, newest first; with a number, plays that one |
+| `SUBTITLESIZE [percent]`, `SUBTITLEDISTANCE [percent]` | the subtitles' size and distance from the edge, set with a number |
+| `SCREENMODE [WORKBENCH\|id]` | the full screen's mode: the setting and the mode it opens in |
+| `SETTINGS [SAVE\|CANCEL]` | opens the settings window; with a word, does what its button does |
+
+Answers come in `RESULT`.
 
 ## Building from source
 

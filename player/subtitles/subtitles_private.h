@@ -6,6 +6,8 @@
 #ifndef KINORA_SUBTITLES_PRIVATE_H
 #define KINORA_SUBTITLES_PRIVATE_H
 
+#include <libraries/demuxer.h>
+
 #include "subtitles.h"
 
 struct font; /* a font file open with FreeType; subtitles_font.c's own */
@@ -129,6 +131,8 @@ struct subtitles
 	ULONG last_serial;            /* the number the last cue added got */
 
 	struct font *font;            /* the font the cues are drawn with, NULL for none */
+	ULONG size;                   /* the font's size in percent of the normal one (SUBTITLE_SIZE_NORMAL) */
+	ULONG distance;               /* the gap between a stack and the frame's edge, in percent of the frame's rows */
 	struct stack stacks[EDGES];   /* the cues shown, at each edge */
 	ULONG last_version;           /* the number the last drawing of a stack got */
 	struct canvas canvases[CANVASES]; /* the frames written into since the decoder's frames were made */

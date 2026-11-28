@@ -3,22 +3,24 @@
  * gui_menu.c - the window's menus.
  *
  * Besides the fixed items the menus list what changes: the film's audio and
- * subtitle tracks and its chapters, the sound units, the playlist.  So they
- * are made again, from a table filled anew, whenever one of those may have
- * changed: after a film opens and after every item picked.
+ * subtitle tracks and its chapters, the recent films.  So they are made
+ * again, from a table filled anew, whenever one of those may have changed:
+ * after a film opens and after every item picked.  What is set once and
+ * left (the sound unit, the subtitles' font, size and distance, the full
+ * screen's mode) is in the settings window, the films in the playlist
+ * window.
  */
 #include <stdio.h>
 #include <string.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
+#include <proto/dos.h>
 #include <proto/intuition.h>
 #include <proto/gadtools.h>
 
 #include "gui_private.h"
 
 #define MENU_ITEMS 128u /* the items the table holds */
-#define AHI_UNITS 4u    /* ahi.device has units 0 to 3 */
-#define FILMS_LISTED 24u /* the playlist's films the menu lists */
 #define CHAPTERS_LISTED 30u /* the chapters the Chapters submenu lists */
 #define AUDIO_STEP 50       /* milliseconds one pick moves the sound */
 #define SUBTITLE_STEP 250   /* and the subtitles */
@@ -26,7 +28,7 @@
 #define SIXTY 60
 #define ARRAY_COUNT(array) (sizeof(array) / sizeof((array)[0]))
 
-_Static_assert(CHAPTERS_LISTED <= NOSUB, "Intuition numbers an item's subitems 0 to NOSUB - 1");
+_Static_assert(CHAPTERS_LISTED <= NOSUB && SETTINGS_RECENT <= NOSUB, "Intuition numbers an item's subitems 0 to NOSUB - 1");
 
 /* A shape the picture can be shown in */
 struct aspect
@@ -57,7 +59,8 @@ enum menu_id
 	MENU_STOP,
 	MENU_NEXT,
 	MENU_PREVIOUS,
-	MENU_SHARED,
+	MENU_PLAYLIST_SHOW,
+	MENU_SETTINGS,
 	MENU_SUBTITLE_OFF,
 	MENU_JUMP,
 	MENU_AUDIO_LATER,
@@ -65,14 +68,11 @@ enum menu_id
 	MENU_SUBTITLES_LATER,
 	MENU_SUBTITLES_EARLIER,
 	MENU_NO_DELAYS,
-	MENU_FONT,
-	MENU_FONT_OWN,
 	MENU_STATISTICS,
-	MENU_TRACK = 0x100, /* + the track's place in gui->tracks */
-	MENU_UNIT = 0x200,  /* + the unit */
-	MENU_FILM = 0x300,  /* + the film's place in the playlist */
-	MENU_CHAPTER = 0x400, /* + the chapter's place in gui->chapters */
-	MENU_ASPECT = 0x500,  /* + the shape's place in aspects[] */
+	MENU_TRACK = 0x100,   /* + the track's place in gui->tracks */
+	MENU_RECENT = 0x200,  /* + the film's place in settings.recent */
+	MENU_CHAPTER = 0x300, /* + the chapter's place in gui->chapters */
+	MENU_ASPECT = 0x400,  /* + the shape's place in aspects[] */
 	MENU_RANGE = 0xff00
 };
 
@@ -111,13 +111,30 @@ static void item_add(struct menu_table *table, UBYTE type, CONST_STRPTR label, C
 }
 
 /**
+ * item_ghost() - Add an item that cannot be picked: it says why a menu or submenu has none.
+ * @table: the table
+ * @type:  NM_ITEM or NM_SUB
+ * @label: its text, copied
+ */
+static void item_ghost(struct menu_table *table, UBYTE type, CONST_STRPTR label)
+{
+	ULONG count = table->count;
+	item_add(table, type, label, NULL, 0, -1);
+	if (table->count > count)
+		table->gui->new_menus[count].nm_Flags |= NM_ITEMDISABLED;
+}
+
+/**
  * tracks_add() - Add the film's tracks of one kind.
  * @table: the table
  * @kind:  audio or subtitle
+ *
+ * Return: how many there are.
  */
-static void tracks_add(struct menu_table *table, enum engine_track_kind kind)
+static ULONG tracks_add(struct menu_table *table, enum engine_track_kind kind)
 {
 	const struct gui *gui = table->gui;
+	ULONG added = 0;
 	for (ULONG i = 0; i < gui->track_count; i++)
 	{
 		const struct engine_track *track = &gui->tracks[i];
@@ -130,7 +147,9 @@ static void tracks_add(struct menu_table *table, enum engine_track_kind kind)
 		else
 			snprintf(label, sizeof(label), "%s %s", track->language, track->title);
 		item_add(table, NM_ITEM, (CONST_STRPTR)label, NULL, MENU_TRACK + i, track->selected);
+		added++;
 	}
+	return added;
 }
 
 /**
@@ -148,38 +167,74 @@ static BOOL subtitles_shown(const struct gui *gui)
 }
 
 /**
- * sound_add() - Add the Audio menu: the film's tracks, then the units.
+ * sound_add() - Add the Audio menu: the film's tracks.
  * @table: the table
  */
 static void sound_add(struct menu_table *table)
 {
-	const struct settings *settings = &table->gui->settings;
 	item_add(table, NM_TITLE, (CONST_STRPTR) "Audio", NULL, 0, -1);
-	tracks_add(table, ENGINE_TRACK_AUDIO);
-	item_add(table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
-	for (ULONG unit = 0; unit < AHI_UNITS; unit++)
-	{
-		char label[MENU_LABEL_SIZE];
-		snprintf(label, sizeof(label), "AHI unit %lu", (unsigned long)unit);
-		item_add(table, NM_ITEM, (CONST_STRPTR)label, NULL, MENU_UNIT + unit, settings->audio_unit == unit);
-	}
-	item_add(table, NM_ITEM, (CONST_STRPTR) "Share the unit with other programs", NULL, MENU_SHARED, settings->shared);
+	if (tracks_add(table, ENGINE_TRACK_AUDIO) == 0)
+		item_ghost(table, NM_ITEM, (CONST_STRPTR) "No sound tracks");
 }
 
 /**
- * films_add() - Add the Playlist menu: its films, the open one checked.
+ * subtitles_add() - Add the Subtitles menu: off, then the film's tracks.
  * @table: the table
  */
-static void films_add(struct menu_table *table)
+static void subtitles_add(struct menu_table *table)
 {
-	const struct playlist *playlist = &table->gui->playlist;
+	item_add(table, NM_TITLE, (CONST_STRPTR) "Subtitles", NULL, 0, -1);
+	ULONG first = table->count;
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Off", NULL, MENU_SUBTITLE_OFF, !subtitles_shown(table->gui));
+	if (tracks_add(table, ENGINE_TRACK_SUBTITLE) != 0)
+		return;
+	table->count = first; /* no tracks: nothing to turn off either */
+	item_ghost(table, NM_ITEM, (CONST_STRPTR) "No subtitle tracks");
+}
+
+/**
+ * playlist_add_menu() - Add the Playlist menu: next, previous, and the playlist window.
+ * @table: the table
+ */
+static void playlist_add_menu(struct menu_table *table)
+{
 	item_add(table, NM_TITLE, (CONST_STRPTR) "Playlist", NULL, 0, -1);
 	item_add(table, NM_ITEM, (CONST_STRPTR) "Next", (CONST_STRPTR) "N", MENU_NEXT, -1);
 	item_add(table, NM_ITEM, (CONST_STRPTR) "Previous", (CONST_STRPTR) "B", MENU_PREVIOUS, -1);
-	if (playlist->count != 0)
-		item_add(table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
-	for (ULONG i = 0; i < playlist->count && i < FILMS_LISTED; i++)
-		item_add(table, NM_ITEM, playlist_name(playlist, i), NULL, MENU_FILM + i, i == playlist->current);
+	item_add(table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Show the playlist...", (CONST_STRPTR) "L", MENU_PLAYLIST_SHOW, -1);
+}
+
+/**
+ * recent_add() - Add the Open recent item and its submenu: the recent films, newest first, by their names.
+ * @table: the table
+ */
+static void recent_add(struct menu_table *table)
+{
+	const struct settings *settings = &table->gui->settings;
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Open recent", NULL, 0, -1);
+	if (settings->recent[0][0] == 0)
+		item_ghost(table, NM_SUB, (CONST_STRPTR) "No recent films");
+	for (ULONG i = 0; i < SETTINGS_RECENT && settings->recent[i][0] != 0; i++)
+		item_add(table, NM_SUB, FilePart((CONST_STRPTR)settings->recent[i]), NULL, MENU_RECENT + i, -1);
+}
+
+/**
+ * project_add() - Add the Project menu: the files, the settings, quitting.
+ * @table: the table
+ */
+static void project_add(struct menu_table *table)
+{
+	item_add(table, NM_TITLE, (CONST_STRPTR) "Project", NULL, 0, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Open...", (CONST_STRPTR) "O", MENU_OPEN, -1);
+	recent_add(table);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Add to the playlist...", (CONST_STRPTR) "A", MENU_ADD, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Open subtitles...", (CONST_STRPTR) "S", MENU_SUBTITLE_OPEN, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Close", NULL, MENU_CLOSE, -1);
+	item_add(table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Settings...", NULL, MENU_SETTINGS, -1);
+	item_add(table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
+	item_add(table, NM_ITEM, (CONST_STRPTR) "Quit", (CONST_STRPTR) "Q", MENU_QUIT, -1);
 }
 
 /**
@@ -247,23 +302,12 @@ static void play_add(struct menu_table *table)
 static void table_fill(struct gui *gui)
 {
 	struct menu_table table = {.gui = gui};
-	item_add(&table, NM_TITLE, (CONST_STRPTR) "Project", NULL, 0, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Open...", (CONST_STRPTR) "O", MENU_OPEN, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Add to the playlist...", (CONST_STRPTR) "A", MENU_ADD, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Open subtitles...", (CONST_STRPTR) "S", MENU_SUBTITLE_OPEN, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Close", NULL, MENU_CLOSE, -1);
-	item_add(&table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Quit", (CONST_STRPTR) "Q", MENU_QUIT, -1);
+	project_add(&table);
 	view_add(&table);
 	play_add(&table);
 	sound_add(&table);
-	item_add(&table, NM_TITLE, (CONST_STRPTR) "Subtitles", NULL, 0, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Off", NULL, MENU_SUBTITLE_OFF, !subtitles_shown(gui));
-	tracks_add(&table, ENGINE_TRACK_SUBTITLE);
-	item_add(&table, NM_ITEM, NM_BARLABEL, NULL, 0, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Font...", NULL, MENU_FONT, -1);
-	item_add(&table, NM_ITEM, (CONST_STRPTR) "Kinora's font", NULL, MENU_FONT_OWN, gui->settings.font[0] == 0);
-	films_add(&table);
+	subtitles_add(&table);
+	playlist_add_menu(&table);
 	gui->new_menus[table.count] = (struct NewMenu){.nm_Type = NM_END};
 }
 
@@ -321,12 +365,9 @@ static void range_used(struct gui *gui, ULONG id)
 		if (number < gui->track_count)
 			engine_select(gui->engine, gui->tracks[number].kind, gui->tracks[number].stream);
 		break;
-	case MENU_UNIT:
-		gui->settings.audio_unit = number;
-		engine_audio_unit(gui->engine, gui->settings.audio_unit, gui->settings.shared);
-		break;
-	case MENU_FILM:
-		film_play(gui, number);
+	case MENU_RECENT:
+		if (number < SETTINGS_RECENT && gui->settings.recent[number][0] != 0)
+			film_open(gui, (CONST_STRPTR)gui->settings.recent[number]);
 		break;
 	case MENU_CHAPTER:
 		if (number < gui->chapter_count)
@@ -362,10 +403,13 @@ static BOOL play_used(struct gui *gui, ULONG id)
 		jump_ask(gui);
 		return TRUE;
 	case MENU_NEXT:
-		film_play(gui, gui->playlist.current + 1);
+		film_play(gui, playlist_next(&gui->playlist));
 		return TRUE;
 	case MENU_PREVIOUS:
-		film_play(gui, gui->playlist.current - 1);
+		film_play(gui, playlist_previous(&gui->playlist));
+		return TRUE;
+	case MENU_PLAYLIST_SHOW:
+		playlist_window_open(gui);
 		return TRUE;
 	default:
 		return FALSE;
@@ -393,6 +437,9 @@ static BOOL project_used(struct gui *gui, ULONG id)
 	case MENU_CLOSE:
 		film_close(gui);
 		return TRUE;
+	case MENU_SETTINGS:
+		settings_window_open(gui);
+		return TRUE;
 	case MENU_QUIT:
 		gui->quit = TRUE;
 		return TRUE;
@@ -412,12 +459,6 @@ static void item_used(struct gui *gui, ULONG id)
 		return;
 	switch (id)
 	{
-	case MENU_FONT:
-		font_ask(gui);
-		break;
-	case MENU_FONT_OWN:
-		font_set(gui, (CONST_STRPTR) "");
-		break;
 	case MENU_FULL_SCREEN:
 		full_screen_toggle(gui);
 		break;
@@ -466,11 +507,6 @@ void menu_used(struct gui *gui, UWORD code)
 	ULONG id = (ULONG)GTMENUITEM_USERDATA(item);
 	if (id >= MENU_TRACK)
 		range_used(gui, id);
-	else if (id == MENU_SHARED)
-	{
-		gui->settings.shared = !gui->settings.shared;
-		engine_audio_unit(gui->engine, gui->settings.audio_unit, gui->settings.shared);
-	}
 	else if (id == MENU_SUBTITLE_OFF)
 		engine_select(gui->engine, ENGINE_TRACK_SUBTITLE, ENGINE_TRACK_OFF);
 	else if (id >= MENU_AUDIO_LATER && id <= MENU_NO_DELAYS)

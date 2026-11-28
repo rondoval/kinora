@@ -51,6 +51,12 @@ extern struct Library *SpaceBase;
 extern struct Library *ButtonBase;
 extern struct Library *SliderBase;
 extern struct Library *StringBase;
+extern struct Library *ListBrowserBase;
+extern struct Library *ChooserBase;
+extern struct Library *CheckBoxBase;
+extern struct Library *GetFileBase;
+extern struct Library *GetScreenModeBase;
+extern struct Library *LabelBase;
 
 /* A library the player needs */
 struct needed_library
@@ -73,6 +79,12 @@ static const struct needed_library libraries[] = {
     {&ButtonBase, "gadgets/button.gadget", 44},
     {&SliderBase, "gadgets/slider.gadget", 44},
     {&StringBase, "gadgets/string.gadget", 44},
+    {&ListBrowserBase, "gadgets/listbrowser.gadget", 44},
+    {&ChooserBase, "gadgets/chooser.gadget", 44},
+    {&CheckBoxBase, "gadgets/checkbox.gadget", 44},
+    {&GetFileBase, "gadgets/getfile.gadget", 44},
+    {&GetScreenModeBase, "gadgets/getscreenmode.gadget", 44},
+    {&LabelBase, "images/label.image", 44},
     {&VideoCodecBase, "videocodec.library", 0},
     {&DemuxerBase, "demuxer.library", 0},
     {&AudioCodecBase, "audiocodec.library", 0},

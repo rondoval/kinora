@@ -11,13 +11,19 @@
 #define ENGINE_ERR_FILE (-2) /* as engine.h's: the file did not open or is no font */
 
 /**
- * subtitles_open() - Make the subtitles of a film, with no cues and no font.
+ * subtitles_open() - Make the subtitles of a film, with no cues and no font, at the normal size and distance.
  *
  * Return: the subtitles, NULL without memory.
  */
 struct subtitles *subtitles_open(void)
 {
-	return AllocVec(sizeof(struct subtitles), MEMF_ANY | MEMF_CLEAR);
+	struct subtitles *subtitles = AllocVec(sizeof(struct subtitles), MEMF_ANY | MEMF_CLEAR);
+	if (subtitles != NULL)
+	{
+		subtitles->size = SUBTITLE_SIZE_NORMAL;
+		subtitles->distance = SUBTITLE_DISTANCE_NORMAL;
+	}
+	return subtitles;
 }
 
 /**
@@ -55,6 +61,24 @@ LONG subtitles_set_font(struct subtitles *subtitles, CONST_STRPTR name)
 	for (enum edge edge = EDGE_BOTTOM; edge < EDGES; edge++)
 		subtitles->stacks[edge].drawn_width = 0; /* drawn anew with the new font */
 	return 0;
+}
+
+/**
+ * subtitles_set_look() - Draw the cues at another size, or stand them at another distance from the frame's edge.
+ * @subtitles: the subtitles
+ * @size:      the font's size in percent of the normal one, SUBTITLE_SIZE_LEAST to SUBTITLE_SIZE_MOST
+ * @distance:  the gap between a stack and the frame's edge, in percent of the frame's rows, up to SUBTITLE_DISTANCE_MOST
+ *
+ * The stacks are drawn anew at another size; at another distance they are
+ * only written elsewhere, which stack_write() sees for itself.
+ */
+void subtitles_set_look(struct subtitles *subtitles, ULONG size, ULONG distance)
+{
+	if (size != subtitles->size)
+		for (enum edge edge = EDGE_BOTTOM; edge < EDGES; edge++)
+			subtitles->stacks[edge].drawn_width = 0;
+	subtitles->size = size;
+	subtitles->distance = distance;
 }
 
 /**

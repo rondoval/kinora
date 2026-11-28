@@ -22,7 +22,8 @@
 
 #include "subtitles_private.h"
 
-#define FONT_ROWS_PART 18u  /* the font's size: the picture's rows divided by this */
+#define FONT_ROWS_PART 18u  /* the font's normal size: the picture's rows divided by this */
+#define PERCENT 100u
 #define FONT_SMALLEST 12u
 #define FONT_LARGEST 120u
 #define OUTLINE_PART 14u    /* the outline's width: the font's size divided by this, one pixel at least */
@@ -267,7 +268,7 @@ static void mask_make(const struct plane *text_plane, struct plane *outline_plan
 }
 
 /**
- * font_size_for() - Set the font's size for a picture.
+ * font_size_for() - Set the font's size for a picture, as its rows and the size chosen make it.
  * @subtitles: the subtitles
  * @rows:      the picture's rows
  * @outline:   gets the outline's width
@@ -276,7 +277,7 @@ static void mask_make(const struct plane *text_plane, struct plane *outline_plan
  */
 static BOOL font_size_for(struct subtitles *subtitles, ULONG rows, ULONG *outline)
 {
-	ULONG size = rows / FONT_ROWS_PART;
+	ULONG size = rows * subtitles->size / (FONT_ROWS_PART * PERCENT);
 	size = size < FONT_SMALLEST ? FONT_SMALLEST : size > FONT_LARGEST ? FONT_LARGEST : size;
 	*outline = size / OUTLINE_PART > 0 ? size / OUTLINE_PART : 1;
 	return subtitles->font != NULL && font_set_size(subtitles->font, size, *outline);

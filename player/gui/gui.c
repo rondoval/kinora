@@ -45,17 +45,19 @@
 #define MICROSECONDS_PER_MS 1000
 #define SECONDS_PER_MINUTE 60
 #define KEY_STEP (10 * (VCTime)MICROSECONDS_PER_SECOND) /* the cursor keys move by this much */
+#define PLAY_LABEL "Play"   /* the play button while the film stands still */
+#define PAUSE_LABEL "Pause" /* and while it plays */
 
 /* What the file requesters show at first; their pattern gadget shows others */
 /* demuxer.library's containers: Matroska, MP4/QuickTime, MPEG-TS, AVI, MPEG-PS, and MPEG-1/2 video alone */
 #define FILM_PATTERN "#?.(mkv|webm|mp4|m4v|mov|ts|m2ts|mts|avi|divx|mpg|mpeg|vob|m1v|m2v)"
 #define SUBTITLE_PATTERN "#?.srt"                             /* SubRip */
-#define FONT_PATTERN "#?.(ttf|otf)"                           /* what FreeType reads */
 
 #define RAWKEY_I 0x17
 #define RAWKEY_A 0x20
 #define RAWKEY_S 0x21
 #define RAWKEY_F 0x23
+#define RAWKEY_L 0x28
 #define RAWKEY_SPACE 0x40
 #define RAWKEY_ESCAPE 0x45
 #define RAWKEY_PAGE_UP 0x48
@@ -104,17 +106,23 @@ void picture_box(struct gui *gui, struct display_place *place)
 }
 
 /**
- * controls_update() - Bring one window's status line and seek slider up to the film.
- * @controls: the window; one that is not open is left alone
- * @text:     the status line
- * @level:    the seek slider's level, -1 to leave it
+ * controls_update() - Bring one window's status line, seek slider and play button up to the film.
+ * @controls:   the window; one that is not open is left alone
+ * @text:       the status line
+ * @level:      the seek slider's level, -1 to leave it
+ * @play_label: the play button's label, PLAY_LABEL or PAUSE_LABEL
  *
  * The slider is left alone while the user holds it.
  */
-static void controls_update(struct controls *controls, const char *text, LONG level)
+static void controls_update(struct controls *controls, const char *text, LONG level, CONST_STRPTR play_label)
 {
 	if (controls->window == NULL)
 		return;
+	if (play_label != controls->play_label)
+	{
+		controls->play_label = play_label;
+		gadget_set(controls->gadgets[GID_PLAY], controls->window, GA_Text, (ULONG)play_label);
+	}
 	if (strcmp(text, controls->status) != 0)
 	{
 		strcpy(controls->status, text);
@@ -125,17 +133,23 @@ static void controls_update(struct controls *controls, const char *text, LONG le
 }
 
 /**
- * film_follow() - Follow the film: bring the status lines and seek sliders up to it, and go on to the next film when one ends.
+ * film_follow() - Follow the film: bring the status lines, seek sliders and the full screen's pointer up to it, and go on to the next film when one ends.
  * @gui: the front
  */
 void film_follow(struct gui *gui)
 {
 	struct engine_status status;
 	engine_status(gui->engine, &status);
-	if (status.state == ENGINE_ENDED && gui->playlist.current + 1 < gui->playlist.count)
+	if (status.state == ENGINE_ENDED && playlist_next(&gui->playlist) < gui->playlist.count)
 	{
-		film_play(gui, gui->playlist.current + 1);
+		film_play(gui, playlist_next(&gui->playlist));
 		return;
+	}
+	BOOL playing = status.state == ENGINE_PLAYING;
+	if (playing != gui->film_playing)
+	{
+		gui->film_playing = playing;
+		full_screen_pointer(gui);
 	}
 	BOOL has_length = status.duration != VC_TIME_UNKNOWN && status.duration > 0;
 	long position = (long)(status.position / MICROSECONDS_PER_SECOND);
@@ -146,8 +160,9 @@ void film_follow(struct gui *gui)
 	         status.error != 0 ? " (error)" : "", (unsigned long)status.width, (unsigned long)status.height,
 	         (unsigned long)status.frames_dropped);
 	VCTime level = has_length ? status.position * SEEK_STEPS / status.duration : -1;
-	controls_update(&gui->player, text, (LONG)level);
-	controls_update(&gui->strip, text, (LONG)level);
+	CONST_STRPTR play_label = gui->film_playing ? (CONST_STRPTR)PAUSE_LABEL : (CONST_STRPTR)PLAY_LABEL;
+	controls_update(&gui->player, text, (LONG)level, play_label);
+	controls_update(&gui->strip, text, (LONG)level, play_label);
 }
 
 /**
@@ -167,6 +182,8 @@ static void place_now(struct gui *gui, struct display_place *place)
  * film_play() - Open one of the playlist's films and start it.
  * @gui:   the front
  * @index: the film; one past the playlist's end does nothing
+ *
+ * A film that opens goes first among the recent ones.
  */
 void film_play(struct gui *gui, ULONG index)
 {
@@ -174,12 +191,31 @@ void film_play(struct gui *gui, ULONG index)
 		return;
 	struct display_place place;
 	place_now(gui, &place);
-	gui->playlist.current = index;
-	if (engine_open(gui->engine, (CONST_STRPTR)gui->playlist.films[index], &place) == 0)
+	playlist_choose(&gui->playlist, index);
+	const char *name = gui->playlist.films[index];
+	if (engine_open(gui->engine, (CONST_STRPTR)name, &place) == 0)
+	{
 		engine_play(gui->engine, TRUE);
+		settings_recent_add(&gui->settings, name);
+	}
 	else
 		DisplayBeep(gui->player.window->WScreen);
 	menus_make(gui);
+}
+
+/**
+ * film_open() - Play a film in place of the playlist's.
+ * @gui:  the front
+ * @name: its path; it may be one of the settings' recent films, which film_play() moves
+ */
+void film_open(struct gui *gui, CONST_STRPTR name)
+{
+	char path[PATH_SIZE];
+	if (strlen((const char *)name) >= sizeof(path))
+		return;
+	strcpy(path, (const char *)name);
+	playlist_clear(&gui->playlist);
+	film_add(gui, (CONST_STRPTR)path, TRUE);
 }
 
 /**
@@ -384,49 +420,68 @@ void statistics_toggle(struct gui *gui)
 }
 
 /**
+ * font_file() - The font file a font's name in the settings stands for.
+ * @name: the settings' name: a file; empty for Kinora's own font, in the drawer Fonts beside the program
+ * @path: gets the file's path, PATH_SIZE bytes
+ *
+ * Return: TRUE, FALSE when the path does not fit.
+ */
+BOOL font_file(CONST_STRPTR name, char *path)
+{
+	if (name[0] != 0)
+	{
+		if (strlen((const char *)name) >= PATH_SIZE)
+			return FALSE;
+		strcpy(path, (const char *)name);
+		return TRUE;
+	}
+	return NameFromLock(GetProgramDir(), (STRPTR)path, PATH_SIZE) && AddPart((STRPTR)path, (CONST_STRPTR)OWN_FONT, PATH_SIZE);
+}
+
+/**
  * font_set() - Draw the subtitles with a font, and remember it.
  * @gui:  the front
- * @name: the font file; an empty name is Kinora's own font, in the drawer Fonts beside the program
+ * @name: the font file; an empty name is Kinora's own font (font_file())
  *
  * Return: 0, the engine's error when the file is no font; the font before then stays.
  */
 LONG font_set(struct gui *gui, CONST_STRPTR name)
 {
-	char own[PATH_SIZE];
-	CONST_STRPTR file = name;
-	if (name[0] == 0)
-	{
-		if (!NameFromLock(GetProgramDir(), (STRPTR)own, PATH_SIZE) || !AddPart((STRPTR)own, (CONST_STRPTR)OWN_FONT, PATH_SIZE))
-			return ENGINE_ERR_FILE;
-		file = (CONST_STRPTR)own;
-	}
-	if (strlen((const char *)name) >= sizeof(gui->settings.font))
+	char file[PATH_SIZE];
+	if (strlen((const char *)name) >= sizeof(gui->settings.font) || !font_file(name, file))
 		return ENGINE_ERR_FILE;
-	LONG error = engine_subtitle_font(gui->engine, file);
+	LONG error = engine_subtitle_font(gui->engine, (CONST_STRPTR)file);
 	if (error == 0)
 		strcpy(gui->settings.font, (const char *)name);
 	return error;
 }
 
 /**
- * font_ask() - Ask for a font file with the file requester and draw the subtitles with it.
- * @gui: the front
+ * look_set() - Draw the subtitles at another size, or stand them at another distance from the edge, and remember it.
+ * @gui:      the front
+ * @size:     the size in percent of the normal one; brought into SUBTITLE_SIZE_LEAST to SUBTITLE_SIZE_MOST
+ * @distance: the gap from the frame's edge in percent of its rows; brought down to SUBTITLE_DISTANCE_MOST
  */
-void font_ask(struct gui *gui)
+void look_set(struct gui *gui, ULONG size, ULONG distance)
 {
-	if (gui->font_requester == NULL)
-		gui->font_requester = AllocAslRequestTags(ASL_FileRequest,
-		                                          ASLFR_TitleText, (ULONG) "Subtitle font",
-		                                          ASLFR_RejectIcons, TRUE,
-		                                          ASLFR_DoPatterns, TRUE,
-		                                          ASLFR_InitialPattern, (ULONG)FONT_PATTERN,
-		                                          TAG_DONE);
-	struct FileRequester *requester = gui->font_requester;
-	if (requester == NULL || !AslRequestTags(requester, ASLFR_Window, (ULONG)gui->player.window, ASLFR_SleepWindow, TRUE, TAG_DONE))
-		return;
-	char path[PATH_SIZE];
-	if (!requester_path(0, requester->fr_Drawer, requester->fr_File, path) || font_set(gui, (CONST_STRPTR)path) != 0)
-		DisplayBeep(gui->player.window->WScreen);
+	size = size < SUBTITLE_SIZE_LEAST ? SUBTITLE_SIZE_LEAST : size > SUBTITLE_SIZE_MOST ? SUBTITLE_SIZE_MOST : size;
+	distance = distance > SUBTITLE_DISTANCE_MOST ? SUBTITLE_DISTANCE_MOST : distance;
+	gui->settings.subtitle_size = size;
+	gui->settings.subtitle_distance = distance;
+	engine_subtitle_look(gui->engine, size, distance);
+}
+
+/**
+ * unit_set() - Send the sound to another ahi.device unit, or share it otherwise, and remember it.
+ * @gui:    the front
+ * @unit:   the unit; one past the last is the last
+ * @shared: share it with other programs (6 dB low) rather than take its hardware
+ */
+void unit_set(struct gui *gui, ULONG unit, BOOL shared)
+{
+	gui->settings.audio_unit = unit < SETTINGS_UNITS ? unit : SETTINGS_UNITS - 1;
+	gui->settings.shared = shared;
+	engine_audio_unit(gui->engine, gui->settings.audio_unit, gui->settings.shared);
 }
 
 /**
@@ -491,10 +546,10 @@ static void gadget_used(struct gui *gui, ULONG id, ULONG code)
 		film_stop(gui);
 		break;
 	case GID_PREVIOUS:
-		film_play(gui, gui->playlist.current - 1);
+		film_play(gui, playlist_previous(&gui->playlist));
 		break;
 	case GID_NEXT:
-		film_play(gui, gui->playlist.current + 1);
+		film_play(gui, playlist_next(&gui->playlist));
 		break;
 	case GID_SEEK:
 		seek_to_level(gui, code);
@@ -558,10 +613,10 @@ static BOOL key_moves(struct gui *gui, ULONG code)
 		seek_by(gui, KEY_STEP);
 		return TRUE;
 	case RAWKEY_PAGE_UP:
-		film_play(gui, gui->playlist.current - 1);
+		film_play(gui, playlist_previous(&gui->playlist));
 		return TRUE;
 	case RAWKEY_PAGE_DOWN:
-		film_play(gui, gui->playlist.current + 1);
+		film_play(gui, playlist_next(&gui->playlist));
 		return TRUE;
 	default:
 		return FALSE;
@@ -590,6 +645,9 @@ void key_used(struct gui *gui, ULONG code)
 		break;
 	case RAWKEY_S:
 		track_cycle(gui, ENGINE_TRACK_SUBTITLE);
+		break;
+	case RAWKEY_L:
+		playlist_window_open(gui);
 		break;
 	case RAWKEY_ESCAPE:
 		if (gui->screen != NULL)
@@ -664,11 +722,11 @@ static void events_loop(struct gui *gui)
 	tick_send(gui);
 	while (!gui->quit)
 	{
-		ULONG window_signals = 0;
-		GetAttr(WINDOW_SigMask, gui->player.window_object, &window_signals);
+		ULONG windows = window_signals(gui->player.window_object) | window_signals(gui->settings_window.window_object) |
+		                window_signals(gui->playlist_window.window_object) | full_screen_signals(gui);
 		ULONG ports = (gui->rexx_port != NULL ? 1UL << gui->rexx_port->mp_SigBit : 0) |
 		              (gui->drop_port != NULL ? 1UL << gui->drop_port->mp_SigBit : 0);
-		ULONG got = Wait(window_signals | full_screen_signals(gui) | tick_signal | ports | 1UL << gui->engine_signal | SIGBREAKF_CTRL_C);
+		ULONG got = Wait(windows | tick_signal | ports | 1UL << gui->engine_signal | SIGBREAKF_CTRL_C);
 		if (got & SIGBREAKF_CTRL_C)
 			gui->quit = TRUE;
 		if ((got & tick_signal) != 0 && CheckIO(&gui->timer->tr_node) != NULL)
@@ -679,11 +737,42 @@ static void events_loop(struct gui *gui)
 		}
 		controls_input_take(gui, &gui->player);
 		full_screen_input_take(gui);
+		settings_window_input_take(gui);
+		playlist_window_input_take(gui);
 		rexx_take(gui);
 		drop_take(gui);
-		if (!gui->quit)
-			film_follow(gui);
+		if (gui->quit)
+			break;
+		film_follow(gui);
+		playlist_window_follow(gui);
 	}
+}
+
+/**
+ * window_signals() - The signals a ReAction window's input comes with.
+ * @window_object: the window.class object; NULL for a window not open
+ *
+ * Return: the signal mask, 0 for none.
+ */
+ULONG window_signals(Object *window_object)
+{
+	ULONG signals = 0;
+	if (window_object != NULL)
+		GetAttr(WINDOW_SigMask, window_object, &signals);
+	return signals;
+}
+
+/**
+ * gadget_set() - Set one attribute of a gadget in an open window, and draw it again where that is wanted.
+ * @gadget: the gadget
+ * @window: its window
+ * @tag:    the attribute
+ * @value:  its value
+ */
+void gadget_set(struct Gadget *gadget, struct Window *window, Tag tag, ULONG value)
+{
+	if (SetGadgetAttrs(gadget, window, NULL, tag, value, TAG_DONE) != 0)
+		RefreshGList(gadget, window, NULL, 1);
 }
 
 /**
@@ -693,7 +782,7 @@ static void events_loop(struct gui *gui)
  *
  * Return: the gadget, NULL without memory.
  */
-static struct Gadget *button_make(ULONG id, CONST_STRPTR text)
+struct Gadget *button_make(ULONG id, CONST_STRPTR text)
 {
 	return (struct Gadget *)NewObject(BUTTON_GetClass(), NULL, GA_ID, id, GA_RelVerify, TRUE, GA_Text, (ULONG)text, TAG_END);
 }
@@ -701,15 +790,16 @@ static struct Gadget *button_make(ULONG id, CONST_STRPTR text)
 /**
  * slider_make() - Make a horizontal slider.
  * @id:    its number
+ * @least: its lowest level
  * @most:  its highest level
  * @level: the level it starts at
  *
  * Return: the gadget, NULL without memory.
  */
-static struct Gadget *slider_make(ULONG id, ULONG most, ULONG level)
+static struct Gadget *slider_make(ULONG id, ULONG least, ULONG most, ULONG level)
 {
-	return (struct Gadget *)NewObject(SLIDER_GetClass(), NULL, GA_ID, id, GA_RelVerify, TRUE, SLIDER_Min, 0, SLIDER_Max, most, SLIDER_Level,
-	                                  level, SLIDER_Orientation, SLIDER_HORIZONTAL, TAG_END);
+	return (struct Gadget *)NewObject(SLIDER_GetClass(), NULL, GA_ID, id, GA_RelVerify, TRUE, SLIDER_Min, least, SLIDER_Max, most,
+	                                  SLIDER_Level, level, SLIDER_Orientation, SLIDER_HORIZONTAL, TAG_END);
 }
 
 /**
@@ -726,12 +816,12 @@ static BOOL gadgets_make(struct controls *controls, BOOL picture, ULONG volume)
 	if (picture)
 		gadgets[GID_PICTURE] = (struct Gadget *)NewObject(SPACE_GetClass(), NULL, GA_ID, GID_PICTURE, SPACE_MinWidth, PICTURE_MIN_WIDTH,
 		                                                  SPACE_MinHeight, PICTURE_MIN_HEIGHT, TAG_END);
-	gadgets[GID_SEEK] = slider_make(GID_SEEK, SEEK_STEPS, 0);
+	gadgets[GID_SEEK] = slider_make(GID_SEEK, 0, SEEK_STEPS, 0);
 	gadgets[GID_PREVIOUS] = button_make(GID_PREVIOUS, (CONST_STRPTR) "|<");
-	gadgets[GID_PLAY] = button_make(GID_PLAY, (CONST_STRPTR) "Play / Pause");
+	gadgets[GID_PLAY] = button_make(GID_PLAY, (CONST_STRPTR)PAUSE_LABEL); /* the longer label sizes it; film_follow() sets the right one */
 	gadgets[GID_STOP] = button_make(GID_STOP, (CONST_STRPTR) "Stop");
 	gadgets[GID_NEXT] = button_make(GID_NEXT, (CONST_STRPTR) ">|");
-	gadgets[GID_VOLUME] = slider_make(GID_VOLUME, VOLUME_STEPS, volume);
+	gadgets[GID_VOLUME] = slider_make(GID_VOLUME, 0, VOLUME_STEPS, volume);
 	gadgets[GID_STATUS] = (struct Gadget *)NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_STATUS, GA_ReadOnly, TRUE, GA_Text,
 	                                                 (ULONG) "No film", BUTTON_Justification, BCJ_LEFT, TAG_END);
 	for (ULONG id = picture ? GID_PICTURE : GID_SEEK; id < GID_COUNT; id++)
@@ -867,6 +957,7 @@ static int gui_serve(struct gui *gui, const struct gui_setup *setup)
 	engine_volume(gui->engine, gui->settings.volume * AUDIO_VOLUME_FULL / VOLUME_STEPS);
 	if (font_set(gui, (CONST_STRPTR)gui->settings.font) != 0)
 		font_set(gui, (CONST_STRPTR) ""); /* the font chosen is gone: Kinora's own again */
+	look_set(gui, gui->settings.subtitle_size, gui->settings.subtitle_distance);
 	for (CONST_STRPTR *file = setup->files; file != NULL && *file != NULL; file++)
 		playlist_add(&gui->playlist, *file);
 
@@ -877,6 +968,8 @@ static int gui_serve(struct gui *gui, const struct gui_setup *setup)
 	film_play(gui, 0);
 	events_loop(gui);
 
+	settings_window_close(gui, FALSE); /* what it changed and did not save goes back */
+	playlist_window_close(gui);        /* its place remembered */
 	drop_close(gui);
 	rexx_close(gui);
 	engine_place(gui->engine, NULL); /* before the window and the screen go: the engine draws into them */
@@ -914,8 +1007,6 @@ int gui_run(const struct gui_setup *setup)
 		FreeAslRequest(gui.film_requester);
 	if (gui.subtitle_requester != NULL)
 		FreeAslRequest(gui.subtitle_requester);
-	if (gui.font_requester != NULL)
-		FreeAslRequest(gui.font_requester);
 	playlist_clear(&gui.playlist);
 	timer_free(&gui);
 	FreeSignal(gui.engine_signal);

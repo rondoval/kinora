@@ -24,6 +24,7 @@ class Status:
     dropped: int
     error: int
     full_screen: bool
+    pointer: bool       # the full screen shows the pointer: the strip up, the film not playing
 
 
 @dataclass
@@ -71,9 +72,9 @@ class Player:
     def status(self) -> Status:
         """STATUS, read."""
         words = self.rexx("STATUS").split()
-        assert len(words) == 9 and words[0] in STATES, f"STATUS answered {words}"
+        assert len(words) == 10 and words[0] in STATES, f"STATUS answered {words}"
         numbers = [int(word) for word in words[1:]]
-        return Status(words[0], *numbers[:7], bool(numbers[7]))
+        return Status(words[0], *numbers[:7], bool(numbers[7]), bool(numbers[8]))
 
     def tracks(self) -> list[Track]:
         """TRACKS, read."""

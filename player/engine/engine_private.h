@@ -50,6 +50,7 @@ enum engine_command
 	COMMAND_UNIT,
 	COMMAND_SUBTITLE_FILE,
 	COMMAND_SUBTITLE_FONT,
+	COMMAND_SUBTITLE_LOOK,
 	COMMAND_CHAPTERS,
 	COMMAND_DELAYS,
 	COMMAND_ASPECT,
@@ -88,6 +89,11 @@ union engine_arguments
 	} unit; /* COMMAND_UNIT */
 	CONST_STRPTR subtitle_file; /* COMMAND_SUBTITLE_FILE: the SubRip file */
 	CONST_STRPTR subtitle_font; /* COMMAND_SUBTITLE_FONT: the font file */
+	struct
+	{
+		ULONG size;     /* the font's size in percent of the normal one */
+		ULONG distance; /* the gap from the frame's edge, in percent of its rows */
+	} subtitle_look; /* COMMAND_SUBTITLE_LOOK */
 	struct
 	{
 		struct engine_chapter *list; /* filled in */
@@ -161,14 +167,19 @@ struct reads
 };
 
 /* The engine */
-/* What the video decoder is asked to leave out (VCA_Skip) while pictures come too late, and since when */
+/* What the video decoder is asked to leave out (VCA_Skip) while pictures come too late, and since when (architecture 6.3) */
 struct video_skip
 {
-	ULONG level;      /* VCSK_*, the one the decoder has */
-	VCTime changed;   /* clock_wall() at the last step up or back */
-	VCTime lowered;   /* clock_wall() at the last step back, 0 when the last step was up */
-	VCTime hold;      /* how long without a dropped picture before a step back */
-	VCTime last_drop; /* clock_wall() at the last dropped picture */
+	ULONG level;         /* VCSK_*, the one the decoder has; ULONG as VCA_Skip carries it (videocodec.h defines, not an enum) */
+	VCTime changed;      /* clock_wall() at the last step up or back */
+	VCTime lowered;      /* clock_wall() at the last step back; 0 when the last step was up, or the step back has held */
+	VCTime hold;         /* how long without a dropped picture before a step back */
+	VCTime last_drop;    /* clock_wall() at the last dropped picture that counted */
+	VCTime calm_until;   /* clock_wall() until which drops do not count: the engine upset the pictures' flow itself */
+	ULONG drops;         /* drops that counted since drops_since */
+	VCTime drops_since;  /* clock_wall() where that count began */
+	VCTime key_last;     /* the time of the last key frame sent to the decoder, VC_TIME_UNKNOWN after an open or a move */
+	VCTime key_gap_most; /* the longest gap between two key frames seen in the film, 0 before two were seen */
 };
 
 struct engine
@@ -295,6 +306,7 @@ void video_close(struct engine *engine);
 void video_pump(struct engine *engine);
 void video_flush(struct engine *engine);
 void video_place(struct engine *engine, const struct display_place *place);
+void video_calm(struct engine *engine);
 void video_attach(struct engine *engine);
 
 /* engine_audio.c */

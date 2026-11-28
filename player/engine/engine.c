@@ -254,7 +254,8 @@ static LONG handle_close(struct engine *engine, struct engine_message *message)
  * @engine:  the engine
  * @message: the command
  *
- * A film that has ended stays ended until it is moved in.
+ * A film that has ended stays ended until it is moved in.  Pictures late
+ * just after the start do not make the decoder skip (video_calm()).
  *
  * Return: 0.
  */
@@ -264,6 +265,8 @@ static LONG handle_play(struct engine *engine, struct engine_message *message)
 		return 0;
 	if (message->with.play)
 	{
+		if (engine->state != ENGINE_PLAYING)
+			video_calm(engine); /* the clock starts again: what is late meanwhile is the start's */
 		engine->state = ENGINE_PLAYING;
 		engine_clock_start(engine);
 	}
@@ -417,6 +420,24 @@ static LONG handle_subtitle_font(struct engine *engine, struct engine_message *m
 }
 
 /**
+ * handle_subtitle_look() - COMMAND_SUBTITLE_LOOK: draw the subtitles at another size or distance from the edge.
+ * @engine:  the engine
+ * @message: the command
+ *
+ * A film that stands still is shown again with them; a playing one shows
+ * them from its next picture.
+ *
+ * Return: 0.
+ */
+static LONG handle_subtitle_look(struct engine *engine, struct engine_message *message)
+{
+	subtitles_set_look(engine->subtitles, message->with.subtitle_look.size, message->with.subtitle_look.distance);
+	if (engine->state != ENGINE_EMPTY && engine->state != ENGINE_PLAYING)
+		reseek(engine);
+	return 0;
+}
+
+/**
  * handle_chapters() - COMMAND_CHAPTERS.
  * @engine:  the engine
  * @message: the command
@@ -502,6 +523,7 @@ static LONG (*const handlers[COMMAND_END])(struct engine *engine, struct engine_
     [COMMAND_UNIT]          = handle_unit,
     [COMMAND_SUBTITLE_FILE] = handle_subtitle_file,
     [COMMAND_SUBTITLE_FONT] = handle_subtitle_font,
+    [COMMAND_SUBTITLE_LOOK] = handle_subtitle_look,
     [COMMAND_CHAPTERS]      = handle_chapters,
     [COMMAND_DELAYS]        = handle_delays,
     [COMMAND_ASPECT]        = handle_aspect,
@@ -842,6 +864,18 @@ LONG engine_subtitle_font(struct engine *engine, CONST_STRPTR name)
 {
 	struct engine_message message = {.command = COMMAND_SUBTITLE_FONT, .with.subtitle_font = name};
 	return command_send(engine, &message);
+}
+
+/**
+ * engine_subtitle_look() - Draw the subtitles at another size, or stand them at another distance from the frame's edge.
+ * @engine:   the engine
+ * @size:     the font's size in percent of the normal one, SUBTITLE_SIZE_LEAST to SUBTITLE_SIZE_MOST (subtitles.h)
+ * @distance: the gap from the frame's edge, in percent of its rows, up to SUBTITLE_DISTANCE_MOST
+ */
+void engine_subtitle_look(struct engine *engine, ULONG size, ULONG distance)
+{
+	struct engine_message message = {.command = COMMAND_SUBTITLE_LOOK, .with.subtitle_look = {.size = size, .distance = distance}};
+	command_send(engine, &message);
 }
 
 /**
