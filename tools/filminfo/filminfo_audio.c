@@ -76,18 +76,19 @@ static LONG receive_frames(struct ACSession *session, struct totals *totals)
  * decode_packets() - Send the stream's packets to the decoder, then its end.
  * @source:  the source, the stream selected
  * @session: the session
+ * @most:    PACKETS: the end after this many, 0 for the stream's end
  * @totals:  the run's counts
  *
  * Return: ACERR_END when everything was decoded, else the error that stopped it.
  */
-static LONG decode_packets(struct DMXSource *source, struct ACSession *session, struct totals *totals)
+static LONG decode_packets(struct DMXSource *source, struct ACSession *session, ULONG most, struct totals *totals)
 {
 	LONG error = ACERR_AGAIN;
 	while (error == ACERR_AGAIN && (SetSignal(0, 0) & SIGBREAKF_CTRL_C) == 0)
 	{
 		struct DMXPacket read = {.Size = sizeof(read)};
 		struct ACPacket packet = {.Size = sizeof(packet)}; /* Length 0, the end, unless a packet was read */
-		BOOL have = DMX_ReadPacket(source, &read) == 0;
+		BOOL have = (most == 0 || totals->packets < most) && DMX_ReadPacket(source, &read) == 0;
 		if (have)
 		{
 			packet.Data = read.Data;
@@ -165,7 +166,7 @@ int audio_decode(struct DMXSource *source, const LONG *args)
 	struct totals totals = {.first = VC_TIME_UNKNOWN};
 	if (args[ARG_TO] != 0)
 		totals.output = Open((CONST_STRPTR)args[ARG_TO], MODE_NEWFILE);
-	error = decode_packets(source, session, &totals);
+	error = decode_packets(source, session, number_of(args, ARG_PACKETS), &totals);
 	if (totals.output != 0)
 		Close(totals.output);
 	AC_CloseSession(session);

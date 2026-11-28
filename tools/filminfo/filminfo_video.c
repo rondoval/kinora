@@ -51,6 +51,7 @@ struct run
 	BOOL done;                     /* the decoder's end came back, or it failed */
 	LONG status;                   /* 0, or the error that stopped the run */
 	ULONG packets;                 /* the file's packets sent */
+	ULONG packets_most;            /* PACKETS: the end after this many, 0 for the stream's end */
 	ULONG pictures;                /* pictures out */
 	VCTime first;                  /* the first picture's time */
 	VCTime last;                   /* the last's */
@@ -315,11 +316,18 @@ static BOOL items_take(struct run *run)
 /**
  * read_next() - Read the file's next packet of the stream, unless one is being sent.
  * @run: the run
+ *
+ * After PACKETS of them the file counts as ended: the end mark goes next.
  */
 static void read_next(struct run *run)
 {
 	if (run->have_read || run->file_ended)
 		return;
+	if (run->packets_most != 0 && run->packets >= run->packets_most)
+	{
+		run->file_ended = TRUE; /* PACKETS: as far as the decode goes */
+		return;
+	}
 	run->read.Size = sizeof(run->read);
 	LONG error = DMX_ReadPacket(run->source, &run->read);
 	run->have_read = error == 0;
@@ -460,7 +468,8 @@ static int stream_decode(struct DMXSource *source, const LONG *args)
 	LONG error = 0;
 	struct run run = {.source = source, .stream = (ULONG)number, .md5 = args[ARG_MD5] != 0, .first = VC_TIME_UNKNOWN,
 	                  .last = VC_TIME_UNKNOWN, .signal = 1UL << signal,
-	                  .seek_ms = args[ARG_SEEK] != 0 ? (LONG)number_of(args, ARG_SEEK) : -1};
+	                  .seek_ms = args[ARG_SEEK] != 0 ? (LONG)number_of(args, ARG_SEEK) : -1,
+	                  .packets_most = number_of(args, ARG_PACKETS)};
 	run.session = session_open(&stream, args, signal, &error, &chosen);
 	printf("stream=%ld codec=%lu tag=%s size=%lux%lu open=%ld\n", (long)number, (unsigned long)stream.Codec, tag_text(stream.Tag, tag),
 	       (unsigned long)stream.Width, (unsigned long)stream.Height, (long)error);

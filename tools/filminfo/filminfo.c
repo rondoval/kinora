@@ -21,7 +21,9 @@
  *                        leave pictures out (VCA_Skip: 1 those nothing refers to, 2 all but
  *                        the key frames), SEEK ms moves there after the first 50 pictures
  *
- * BACKEND names the codec driver to decode with (ACA_Backend, VCA_Backend); PRI runs at that
+ * A decode goes to the stream's end; PACKETS n stops it after the stream's first n packets
+ * (a whole film decodes as long as it lasts, or longer, on the 68k).  Ctrl-C ends it too,
+ * with what came out so far printed.  BACKEND names the codec driver to decode with (ACA_Backend, VCA_Backend); PRI runs at that
  * priority.  Each line is name=value pairs, some behind a word and a number ("stream 0:"):
  * what the tests read, and what a report of a film that does not play needs.
  */
@@ -201,6 +203,17 @@ static int run_at_priority(const LONG *args)
 	int result = args[ARG_FILE] != 0 ? film_run(args) : codecs_show();
 	SetTaskPri(me, priority);
 	return result;
+}
+
+/**
+ * __chkabort() - libnix's Ctrl-C check in its stdio, made to do nothing.
+ *
+ * FilmInfo looks for Ctrl-C itself and ends a decode with its session closed and what came
+ * out printed; libnix's own would end the program inside a printf(), the session left open
+ * and the lines lost.
+ */
+void __chkabort(void)
+{
 }
 
 /**
